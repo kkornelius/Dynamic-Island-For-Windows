@@ -2,7 +2,7 @@
 
 Requirements: Windows x64, current stable Rust/MSVC, Visual Studio C++ Build Tools and a Windows SDK. Optional release scripts use Python 3.11+. Pillow/NumPy are only needed to generate demo media.
 
-The application runs without Rust or Python. `.cargo/config.toml` enables static CRT linking for Windows x64. The PE verifier checks for extra VC++ runtime imports and embedded license notices.
+The application runs without Rust or Python. `.cargo/config.toml` enables static CRT linking for Windows x64. `scripts/build-release.ps1` also remaps builder-specific paths in diagnostics. The PE verifier checks for extra VC++ runtime imports, personal Windows paths and embedded license notices.
 
 ```powershell
 cargo build --release --locked
@@ -15,7 +15,7 @@ cargo build --release --locked
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-cargo build --release --locked
+.\scripts\build-release.ps1
 python scripts/verify-portable.py target/release/dynamic-island-for-windows.exe
 ```
 

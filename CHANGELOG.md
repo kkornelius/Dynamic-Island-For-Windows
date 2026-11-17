@@ -8,6 +8,7 @@
 - Fullscreen/browser hiding and Bluetooth connection notices.
 - Opt-in per-user startup with a stable EXE copy.
 - Single-file x64 EXE with static CRT, embedded font/sound/license notices.
+- Release diagnostics remap builder-specific source paths.
 - Original sample-data screenshots/GIF and reproducible native media tools.
 - Curated build/privacy/architecture docs, file audit and Windows CI.
 - Compact weather-source info link for attribution.

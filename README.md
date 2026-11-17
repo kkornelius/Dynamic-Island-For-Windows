@@ -89,6 +89,7 @@ cargo build --release --locked
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
+.\scripts\build-release.ps1
 python scripts/verify-portable.py target/release/dynamic-island-for-windows.exe
 ```
 

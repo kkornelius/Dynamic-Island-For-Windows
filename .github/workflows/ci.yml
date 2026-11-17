@@ -26,7 +26,7 @@ jobs:
       - name: Unit tests
         run: cargo +stable test --locked
       - name: Release build
-        run: cargo +stable build --release --locked
+        run: .\scripts\build-release.ps1
       - name: Portable binary checks
         run: python scripts/verify-portable.py target/release/dynamic-island-for-windows.exe
       - name: Public-file audit

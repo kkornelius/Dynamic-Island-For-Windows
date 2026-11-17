@@ -32,7 +32,9 @@ def main():
         sections.append(title + "\n\n" + "\n\n".join(texts))
     target = ROOT / "assets/licenses/NOTICES.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n\n" + ("\n\n" + "=" * 72 + "\n\n").join(sections), encoding="utf-8")
+    content = "\n\n" + ("\n\n" + "=" * 72 + "\n\n").join(sections)
+    if not target.exists() or target.read_text(encoding="utf-8") != content:
+        target.write_text(content, encoding="utf-8")
     print(f"Generated {target.relative_to(ROOT)} ({target.stat().st_size:,} bytes)")
 
 

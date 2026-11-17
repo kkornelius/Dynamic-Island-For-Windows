@@ -4,8 +4,7 @@ Push-Location $root
 try {
     python scripts/generate-notices.py
     if ($LASTEXITCODE -ne 0) { throw 'License generation failed.' }
-    cargo build --release --locked
-    if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+    & (Join-Path $PSScriptRoot 'build-release.ps1')
     $binary = Join-Path $root 'target\release\dynamic-island-for-windows.exe'
     python scripts/verify-portable.py $binary
     if ($LASTEXITCODE -ne 0) { throw 'Portable binary checks failed.' }

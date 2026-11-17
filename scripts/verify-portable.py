@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import json
+import re
 import struct
 import sys
 
@@ -48,7 +49,9 @@ def inspect(path):
               "imports": imports, "dynamic_crt_imports": forbidden,
               "embedded_license_notices": embedded, "bytes": len(data),
               "sha256": hashlib.sha256(data).hexdigest()}
-    if subsystem != 2 or forbidden or not embedded:
+    personal_paths = len(re.findall(rb'(?i)[a-z]:[\\/]+Users[\\/]+', data))
+    report['personal_windows_paths'] = personal_paths
+    if subsystem != 2 or forbidden or not embedded or personal_paths:
         raise ValueError("Portable executable validation failed: " + json.dumps(report))
     return report
 

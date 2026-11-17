@@ -32,7 +32,7 @@ ASSETS = {
 }
 SCRIPTS = {f'scripts/{name}' for name in (
     'verify.ps1', 'package.ps1', 'measure-performance.ps1', 'generate-notices.py',
-    'render-demo.py', 'verify-portable.py', 'audit-public.py',
+    'render-demo.py', 'verify-portable.py', 'audit-public.py', 'build-release.ps1',
 )}
 EXACT = ROOT_FILES | DOCS | MEDIA | ASSETS | SCRIPTS
 BINARY = {'.png', '.gif', '.ttf', '.wav'}
