@@ -175,6 +175,7 @@ impl Reader {
                 UIA_ControlTypePropertyId,
                 UIA_BoundingRectanglePropertyId,
                 UIA_IsOffscreenPropertyId,
+                UIA_ProcessIdPropertyId,
             ] {
                 cache.AddProperty(property)?;
             }
@@ -185,6 +186,53 @@ impl Reader {
                 condition,
                 row_cache: None,
             })
+        }
+    }
+    /// Only chrome geometry/focus is read. Never retrieve the URL, edit value,
+    /// search text, document text, or browser history.
+    fn address_bar(&self, window: HWND) -> Result<Option<Rect>> {
+        unsafe {
+            let element = self.automation.GetFocusedElementBuildCache(&self.cache)?;
+            let kind = element.CachedControlType()?;
+            if kind != UIA_EditControlTypeId && kind != UIA_ComboBoxControlTypeId {
+                return Ok(None);
+            }
+            let mut pid = 0;
+            GetWindowThreadProcessId(window, Some(&mut pid));
+            if element.CachedProcessId()? as u32 != pid || element.CachedIsOffscreen()?.as_bool() {
+                return Ok(None);
+            }
+            let bounds = Rect::from(element.CachedBoundingRectangle()?);
+            let mut frame = RECT::default();
+            GetWindowRect(window, &mut frame)?;
+            let scale = (GetDpiForWindow(window) as f32 / 96.0).max(1.0);
+            let header = Rect(
+                frame.left,
+                frame.top,
+                frame.right,
+                frame.top + (150.0 * scale) as i32,
+            );
+            if !bounds.overlaps(header, 0) {
+                return Ok(None);
+            }
+            // Website search fields can be near the screen top too. Reject every
+            // edit nested in a web Document, even when its rectangle overlaps us.
+            let walker = self.automation.ControlViewWalker()?;
+            let mut parent = element;
+            for _ in 0..16 {
+                parent = match walker.GetParentElementBuildCache(&parent, &self.cache) {
+                    Ok(parent) => parent,
+                    Err(_) => return Ok(None),
+                };
+                let kind = parent.CachedControlType()?;
+                if kind == UIA_DocumentControlTypeId {
+                    return Ok(None);
+                }
+                if kind == UIA_WindowControlTypeId {
+                    return Ok(Some(bounds));
+                }
+            }
+            Ok(None)
         }
     }
     fn cached_row(&self, parents: &[IUIAutomationElement], window: HWND) -> Result<Layout> {
@@ -446,10 +494,20 @@ impl BrowserWorker {
                 if reader.is_none() {
                     reader = Reader::new().ok();
                 }
-                let value = reader
-                    .as_mut()
-                    .and_then(|r| r.layout(HWND(q.window as _)).ok())
-                    .and_then(|layout| layout.blocked(q.area, 4));
+                let value = reader.as_mut().and_then(|r| {
+                    let window = HWND(q.window as _);
+                    if r.address_bar(window)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|rect| q.area.overlaps(rect, 4))
+                    {
+                        Some(true)
+                    } else {
+                        r.layout(window)
+                            .ok()
+                            .and_then(|layout| layout.blocked(q.area, 4))
+                    }
+                });
                 let hidden = stable.update(value, Instant::now());
                 if sent != Some(hidden) {
                     bus.send(Event::BrowserSpace(q.generation, hidden));
@@ -594,6 +652,14 @@ mod tests {
         layout.tabs.pop();
         layout.buttons.push(Rect(800, 4, 830, 32));
         assert_eq!(layout.blocked(area, 4), Some(true));
+    }
+    #[test]
+    fn focused_address_geometry_includes_the_capsule_but_lower_chrome_does_not() {
+        // Matches an anchored capsule overlapping the top of Brave's address bar.
+        let capsule = Rect(584, 0, 920, 58);
+        assert!(capsule.overlaps(Rect(208, 40, 1298, 80), 4));
+        assert!(!capsule.overlaps(Rect(208, 84, 1298, 120), 4));
+        assert!(!capsule.overlaps(Rect(0, 40, 400, 80), 4));
     }
     #[test]
     fn negative_coordinates_vertical_tabs_and_unknown_layouts_are_safe() {

@@ -1,0 +1,212 @@
+[
+  {
+    "name": "music-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/music.png",
+    "sha256": "f2527219bbcac76e0d9fd48fb419b7c985593fc9cdcf017630eddb514d1251b8"
+  },
+  {
+    "name": "music-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/music.png",
+    "sha256": "d0715b19fe213d7e8412d776f7be9e4d3b237a2e2d0ee50a7a68d58bfb0f70a6"
+  },
+  {
+    "name": "weather-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/partly-cloudy-day.png",
+    "sha256": "13ee82abb57534dc047e74915007e40ad85cdfb810d57781acfd6a5ce0c83513"
+  },
+  {
+    "name": "weather-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/partly-cloudy-day.png",
+    "sha256": "540a4528b13c9a712049f5ac43c5c82dabc8144652eab9b9528f7da5c8720146"
+  },
+  {
+    "name": "timer-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/timer.png",
+    "sha256": "90790ecee56b6711c5b3feb055e1376e0226d3a4d852cbd3b07791e7c818d7ea"
+  },
+  {
+    "name": "timer-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/timer.png",
+    "sha256": "8b0ff0dfae0d36ae5538806720939e04e63c56ab1cc8a025681dec59c8778ffe"
+  },
+  {
+    "name": "water-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/water.png",
+    "sha256": "b3d90acbe73ef0f6b44a4781bcf1515e90089c9a168ac8642d4877f9db0a6c00"
+  },
+  {
+    "name": "water-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/water.png",
+    "sha256": "6e61e974f5ab65f0b9df531cbef12f7d2c72f783d7bb938de60ff62a7518bb59"
+  },
+  {
+    "name": "notes-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/note.png",
+    "sha256": "bfe5af027e118ffa81dd9ca84746a4d3f66227bc682673caa057b4c2672c751c"
+  },
+  {
+    "name": "notes-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/note.png",
+    "sha256": "4de49d4cbb1795f1dba077e24de14f8d87d687c7c813a60e6e9d40ea65a7517e"
+  },
+  {
+    "name": "settings-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/settings.png",
+    "sha256": "a760efff82aead7f524116e515ea36a288735af4cf18ce9a6e64eb79eded8db2"
+  },
+  {
+    "name": "settings-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/settings.png",
+    "sha256": "7a50f5264fa25a14fde3ab678e484a6fc57897eab75eeef4b1254034d6daf4a3"
+  },
+  {
+    "name": "lyrics-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/speech-bubble.png",
+    "sha256": "9f73e81f4d100c4638863d7c8680ca8b7555c832d5fc82d94da5c851652d741b"
+  },
+  {
+    "name": "lyrics-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/speech-bubble.png",
+    "sha256": "3aca2b370724e8cf799b035924715d72a9656c276e50696ef3056d8f8970b7f6"
+  },
+  {
+    "name": "play-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/play.png",
+    "sha256": "beff19ff100feac85b61ec8bb17c9c8be6c9da7a094ecc37fdd994b7e07fec67"
+  },
+  {
+    "name": "play-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/play.png",
+    "sha256": "a98eadef9c8258677614377908a45313f8836289b15b1f590bbb029df32998ec"
+  },
+  {
+    "name": "pause-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/pause.png",
+    "sha256": "6c59afa92d59125cdcf59802214bc59874dab043220140d612f706a40512abda"
+  },
+  {
+    "name": "pause-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/pause.png",
+    "sha256": "77cec3b0fceb86befaf50158f160501cd70db64ec143b5cad95e5ef9ef583358"
+  },
+  {
+    "name": "previous-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/skip-to-start.png",
+    "sha256": "6703e337e824c6c76621f6d61d887f5646865edc9ca68f4ee1440c253b931deb"
+  },
+  {
+    "name": "previous-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/skip-to-start.png",
+    "sha256": "b7f4768c7871911341b9c4fde575a693786169f9ade31503ced8444cc1c6a086"
+  },
+  {
+    "name": "next-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/end.png",
+    "sha256": "8bcfa4e731c931838e1a3679ba52fe2bfdb48e808e5db2f1e9762f7cd7b31419"
+  },
+  {
+    "name": "next-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/end.png",
+    "sha256": "44541408b3a73a7ff06d64a740d322e36ab66eebb74338e6faddbd2b3007089b"
+  },
+  {
+    "name": "earbuds-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/earbud-headphones.png",
+    "sha256": "3ea5a184351056280c33ddca1111838cfa6659afb06bc6de423527deb7418471"
+  },
+  {
+    "name": "earbuds-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/earbud-headphones.png",
+    "sha256": "8e94ff53cc53812c62bc496b4a57a055954a311bdc697ec5daa1be73d4b0aec0"
+  },
+  {
+    "name": "keyboard-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/keyboard.png",
+    "sha256": "2c8e68fe942315406bc92b0c2440664dd56a5c30b32cd5a1ac6089c6fd3f406f"
+  },
+  {
+    "name": "keyboard-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/keyboard.png",
+    "sha256": "ae7578b49ced6d40b63609d4ee7ad93f42c5d8d167c06d8c9141687e11234571"
+  },
+  {
+    "name": "mouse-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/mouse.png",
+    "sha256": "03db0fded480b1e60df9258e6995ccb5220cbf051aeb3396f0d03902196fed47"
+  },
+  {
+    "name": "mouse-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/mouse.png",
+    "sha256": "7334c0c55c0386c2b4cde73f1c15afbff176ded7de6cd7af530843a96cdee128"
+  },
+  {
+    "name": "speaker-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/speaker.png",
+    "sha256": "096df8a83edf5ed9284c6ba18198e2c4cb2729331a77001f7f02f0f0f26ee70e"
+  },
+  {
+    "name": "speaker-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/speaker.png",
+    "sha256": "26e57b952c6aafdd8f93a16a154036a8124546221c5af90fadf71fa04b7b1bc4"
+  },
+  {
+    "name": "phone-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/iphone.png",
+    "sha256": "180db662f65ee91c6aac481cd85dcc70ce64de9b2cd7f6e99c6aa2552bd080fc"
+  },
+  {
+    "name": "phone-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/iphone.png",
+    "sha256": "279fd1256d157b9a04a41b4ece71774fbcd9625f6147e921fd061662ef65f9a1"
+  },
+  {
+    "name": "controller-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/controller.png",
+    "sha256": "ef9e8948626df7d891cc619bc13dba458c3d0f3a4beaf51a963e052f45a8c68e"
+  },
+  {
+    "name": "controller-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/controller.png",
+    "sha256": "9a028a338022fcfc677e66888ce50a0326687b9c1194b6e53c8bfaa3931a73e0"
+  },
+  {
+    "name": "bluetooth-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/bluetooth.png",
+    "sha256": "e6faaded3e7d967514000928075cf143cfe4d353b663824309bc3d0eda3fd987"
+  },
+  {
+    "name": "bluetooth-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/bluetooth.png",
+    "sha256": "9db37b4595c27fd102c06cbe7674a5ca15851bb8fa7666d41a04ae4542375e8c"
+  },
+  {
+    "name": "close-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/multiply.png",
+    "sha256": "8226ad7c180b97351a5ffc2a865ff0d84c9cfd1d376d91d40ae0f9aad7f3f41f"
+  },
+  {
+    "name": "close-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/multiply.png",
+    "sha256": "6cd0a14bfc623efa7c9f8b67d0e712b34fc32a140da5ab6eeeab89fcc896fd28"
+  },
+  {
+    "name": "moon-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/moon-symbol.png",
+    "sha256": "edfdb3a2da4b129f8ff31dd00799a3757d14b49fb0e69d385f694570b29c8fdf"
+  },
+  {
+    "name": "moon-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/moon-symbol.png",
+    "sha256": "e3e621f4a7d348f5f1a6eab424c9e94fff5fa0242be2c2939de396b272ab9aea"
+  },
+  {
+    "name": "info-FFFFFF.png",
+    "url": "https://img.icons8.com/sf-regular/100/FFFFFF/info.png",
+    "sha256": "4af58046438cae275ae5521c3d60c5aaed5684ac5749a09905e7b104660b9ae1"
+  },
+  {
+    "name": "info-000000.png",
+    "url": "https://img.icons8.com/sf-regular/100/000000/info.png",
+    "sha256": "297ffcbcf9ed755e491d44ee37c4db2c834a58386ebd6b173b7840e97c523534"
+  }
+]

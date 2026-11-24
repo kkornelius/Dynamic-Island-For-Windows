@@ -36,7 +36,7 @@ Direct2D draws into a reusable DIB with DirectWrite text and private embedded In
 
 Text layouts, artwork and glow geometry are cached. Notes keep one replaceable layout rather than one per keystroke. Audio-only redraws clip to the meter; content epochs request full updates for other timed changes. Recoloring reuses shape/lighting data. Hidden overlays stop animation work.
 
-Resize uses a 120 ms cubic ease. Browser hiding fades the already-masked surface rather than recompositing glow every frame. Eyes and icons are vectors.
+The renderer uses analytic damped springs with continuous velocity when reversing a resize. Collapse has a softer response and fades panel content into a centered compact layout while the backdrop follows the live body size; the glass stroke stays independent of content opacity. A single coalesced high-resolution frame clock batches eyes, resize and audio redraw requests into one presentation. Browser hiding fades the already-masked surface. Eyes are vectors; selected Icons8 icons are decoded once and cached per render target.
 
 ## Workers and persistence
 

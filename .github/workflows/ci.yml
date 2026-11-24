@@ -22,7 +22,11 @@ jobs:
       - name: Formatting
         run: cargo +stable fmt --all -- --check
       - name: Clippy
-        run: cargo +stable clippy --locked --all-targets -- -D warnings
+        # Selected PNGs are fetched for embedding, never stored as raw public files.
+        run: |
+          python scripts/fetch-icons.py
+          if ($LASTEXITCODE -ne 0) { throw 'Icon preparation failed.' }
+          cargo +stable clippy --locked --all-targets -- -D warnings
       - name: Unit tests
         run: cargo +stable test --locked
       - name: Release build

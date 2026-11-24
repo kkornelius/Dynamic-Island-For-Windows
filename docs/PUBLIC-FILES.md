@@ -6,7 +6,7 @@ The repository/release use an explicit allowlist.
 |---|---|
 | Rust source under `src/` | App and tests |
 | Cargo files and `.cargo/config.toml` | Locked dependencies and static CRT configuration |
-| Selected `assets/` | Inter/OFL, CC0 gulp/provenance, embedded license notices |
+| Selected `assets/` | Inter/OFL, CC0 gulp/provenance, embedded notices, Icons8 credits/download manifest; raw Icons8 PNGs stay excluded |
 | Curated docs and `docs/media/` | Guides and reviewed fictional-data native previews |
 | Reviewed scripts and `.github/` | Build, audit, demo, packaging and CI |
 | Root README/license/changelog/contribution/security files | Project information |

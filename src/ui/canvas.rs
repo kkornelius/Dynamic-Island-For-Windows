@@ -47,6 +47,7 @@ fn rect(x: i32, y: i32, w: i32, h: i32) -> D2D_RECT_F {
 struct MaskCache {
     radius: i32,
     mode: DockMode,
+    attached: f32,
     style: Option<(u32, f32, f32)>,
     width: i32,
     top: Vec<Vec<EdgePixel>>,
@@ -221,6 +222,17 @@ fn shape_distance(px: f32, py: f32, w: f32, h: f32, r: f32, mode: DockMode, shou
         edge.max(-py).max(py - h).max(-side)
     }
 }
+fn dock_distance(px: f32, py: f32, w: f32, h: f32, r: f32, attached: f32, shoulder: f32) -> f32 {
+    if attached <= 0.0 {
+        return shape_distance(px, py, w, h, r, DockMode::Floating, shoulder);
+    }
+    if attached >= 1.0 {
+        return shape_distance(px, py, w, h, r, DockMode::Anchored, shoulder);
+    }
+    let floating = shape_distance(px, py, w, h, r, DockMode::Floating, shoulder);
+    let anchored = shape_distance(px, py, w, h, r, DockMode::Anchored, shoulder);
+    floating + (anchored - floating) * attached
+}
 #[inline(always)]
 fn composite(pixels: &mut [u8], offset: usize, edge: &EdgePixel, scale: f32) {
     let i = offset + edge.index;
@@ -281,9 +293,11 @@ pub struct Canvas {
     note_layout: Option<(String, IDWriteTextLayout)>,
     artwork: Option<(Arc<Artwork>, ID2D1Bitmap)>,
     color_wheel: Option<(u32, ID2D1Bitmap)>,
+    icons: RefCell<HashMap<(u16, u32, u32), Option<ID2D1Bitmap>>>,
     border: Cell<Option<(u32, f32, f32)>>,
     mask_cache: RefCell<Option<MaskCache>>,
     partial: Cell<Option<[i32; 4]>>,
+    dock_mix: Cell<Option<f32>>,
     border_luts: RefCell<Vec<GlassLut>>,
     surface: Surface,
 }
@@ -372,9 +386,11 @@ impl Canvas {
                 note_layout: None,
                 artwork: None,
                 color_wheel: None,
+                icons: RefCell::new(HashMap::new()),
                 border: Cell::new(None),
                 mask_cache: RefCell::new(None),
                 partial: Cell::new(None),
+                dock_mix: Cell::new(None),
                 border_luts: RefCell::new(Vec::new()),
                 surface: Surface { dc, bitmap, old },
             })
@@ -399,6 +415,16 @@ impl Canvas {
         })
     }
     pub fn begin(&self, origin: i32, top: i32) {
+        let (origin, top) = self
+            .dock_mix
+            .get()
+            .map(|q| {
+                (
+                    super::HALO as f32 + 12.0 * q,
+                    super::HALO as f32 * (1.0 - q),
+                )
+            })
+            .unwrap_or((origin as f32, top as f32));
         unsafe {
             self.target.BeginDraw();
             self.drawing.set(true);
@@ -407,16 +433,15 @@ impl Canvas {
                 M12: 0.0,
                 M21: 0.0,
                 M22: 1.0,
-                M31: origin as f32,
-                M32: top as f32,
+                M31: origin,
+                M32: top,
             });
             if let Some([x, y, w, h]) = self.partial.get() {
                 let clip = D2D_RECT_F {
-                    left: ((x + origin) as f32 * self.scale).floor() / self.scale - origin as f32,
-                    top: ((y + top) as f32 * self.scale).floor() / self.scale - top as f32,
-                    right: ((x + w + origin) as f32 * self.scale).ceil() / self.scale
-                        - origin as f32,
-                    bottom: ((y + h + top) as f32 * self.scale).ceil() / self.scale - top as f32,
+                    left: ((x as f32 + origin) * self.scale).floor() / self.scale - origin,
+                    top: ((y as f32 + top) * self.scale).floor() / self.scale - top,
+                    right: (((x + w) as f32 + origin) * self.scale).ceil() / self.scale - origin,
+                    bottom: (((y + h) as f32 + top) * self.scale).ceil() / self.scale - top,
                 };
                 self.target
                     .PushAxisAlignedClip(&clip, D2D1_ANTIALIAS_MODE_ALIASED);
@@ -437,6 +462,36 @@ impl Canvas {
             }
         }
         Ok(())
+    }
+    /// Fade content as one group; the glass border is applied afterwards and
+    /// stays crisp. Bounds are the visible body, not the full backing capacity.
+    pub fn content_layer(
+        &mut self,
+        bounds: [i32; 4],
+        offset_x: f32,
+        opacity: f32,
+        draw: impl FnOnce(&mut Self),
+    ) {
+        if opacity <= 0.0 {
+            return;
+        }
+        unsafe {
+            let mut transform = Matrix3x2::identity();
+            self.target.GetTransform(&mut transform);
+            let parameters = D2D1_LAYER_PARAMETERS {
+                contentBounds: rect(bounds[0], bounds[1], bounds[2], bounds[3]),
+                maskTransform: Matrix3x2::identity(),
+                opacity: opacity.min(1.0),
+                ..Default::default()
+            };
+            self.target.PushLayer(&parameters, None);
+            let mut shifted = transform;
+            shifted.M31 += offset_x;
+            self.target.SetTransform(&shifted);
+            draw(self);
+            self.target.SetTransform(&transform);
+            self.target.PopLayer();
+        }
     }
     pub fn round(&self, x: i32, y: i32, w: i32, h: i32, r: i32, c: u32) {
         if !self.visible([x, y, w, h]) {
@@ -957,6 +1012,66 @@ impl Canvas {
             let _ = draw;
         }
     }
+    pub fn icon_bitmap(&self, id: u16, bytes: &[u8], area: [i32; 4], opacity: f32) -> bool {
+        use windows::Win32::{Graphics::Imaging::*, System::Com::*, UI::Shell::SHCreateMemStream};
+        let width = (area[2] as f32 * self.scale).round().max(1.0) as u32;
+        let height = (area[3] as f32 * self.scale).round().max(1.0) as u32;
+        let mut cache = self.icons.borrow_mut();
+        let bitmap = cache.entry((id, width, height)).or_insert_with(|| unsafe {
+            let result = (|| -> Result<ID2D1Bitmap> {
+                let stream = SHCreateMemStream(Some(bytes)).ok_or_else(Error::empty)?;
+                let factory: IWICImagingFactory =
+                    CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+                let decoder = factory.CreateDecoderFromStream(
+                    &stream,
+                    std::ptr::null(),
+                    WICDecodeMetadataCacheOnLoad,
+                )?;
+                let frame = decoder.GetFrame(0)?;
+                // Area filtering before rendering avoids severe bilinear
+                // undersampling of 100px outlines at 20–24 physical pixels.
+                let converter = factory.CreateFormatConverter()?;
+                converter.Initialize(
+                    &frame,
+                    &GUID_WICPixelFormat32bppPBGRA,
+                    WICBitmapDitherTypeNone,
+                    None,
+                    0.0,
+                    WICBitmapPaletteTypeCustom,
+                )?;
+                let scaler = factory.CreateBitmapScaler()?;
+                scaler.Initialize(&converter, width, height, WICBitmapInterpolationModeFant)?;
+                self.target.CreateBitmapFromWicBitmap(&scaler, None)
+            })();
+            result.ok()
+        });
+        if let Some(bitmap) = bitmap.as_ref() {
+            unsafe {
+                let mut transform = Matrix3x2::identity();
+                self.target.GetTransform(&mut transform);
+                let left = ((area[0] as f32 + transform.M31) * self.scale).round() / self.scale
+                    - transform.M31;
+                let top = ((area[1] as f32 + transform.M32) * self.scale).round() / self.scale
+                    - transform.M32;
+                let destination = D2D_RECT_F {
+                    left,
+                    top,
+                    right: left + width as f32 / self.scale,
+                    bottom: top + height as f32 / self.scale,
+                };
+                self.target.DrawBitmap(
+                    bitmap,
+                    Some(&destination),
+                    opacity,
+                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                    None,
+                );
+            }
+            true
+        } else {
+            false
+        }
+    }
     pub fn artwork(&mut self, art: &Arc<Artwork>, x: i32, y: i32, size: i32) {
         if !self.visible([x, y, size, size]) {
             return;
@@ -1072,6 +1187,9 @@ impl Canvas {
         self.border
             .set(enabled.then_some((color, width as f32, glow as f32 / 100.0)));
     }
+    pub fn set_dock_mix(&self, attached: Option<f32>) {
+        self.dock_mix.set(attached.map(|q| q.clamp(0.0, 1.0)));
+    }
     pub fn hit_test(&self, x: i32, y: i32) -> bool {
         if x < 0 || y < 0 || x >= self.width || y >= self.height {
             return false;
@@ -1081,25 +1199,25 @@ impl Canvas {
             return false;
         };
         let pad = super::HALO as f32 * self.scale;
-        let top = if c.mode == DockMode::Anchored {
-            0.0
-        } else {
-            pad
-        };
-        shape_distance(
+        let top = pad * (1.0 - c.attached);
+        dock_distance(
             x as f32 + 0.5 - pad,
             y as f32 + 0.5 - top,
             self.width as f32 - 2.0 * pad,
             self.height as f32 - top - pad,
             c.radius as f32 * self.scale,
-            c.mode,
+            c.attached,
             12.0 * self.scale,
         ) <= 0.0
     }
     pub fn mask(&self, radius: i32, mode: DockMode) {
         let started = self.profiling.then(std::time::Instant::now);
         let pad = super::HALO as f32 * self.scale;
-        let top = if mode == DockMode::Anchored { 0.0 } else { pad };
+        let attached = self
+            .dock_mix
+            .get()
+            .unwrap_or(if mode == DockMode::Anchored { 1.0 } else { 0.0 });
+        let top = pad * (1.0 - attached);
         let body_height = self.height as f32 - top - pad;
         let radius = radius
             .min((body_height / (2.0 * self.scale)).floor() as i32)
@@ -1110,6 +1228,7 @@ impl Canvas {
         if cache.as_ref().is_none_or(|c| {
             c.radius != radius
                 || c.mode != mode
+                || c.attached != attached
                 || shape_style(c.style) != shape_style(self.border.get())
                 || c.width != self.width
         }) {
@@ -1154,7 +1273,7 @@ impl Canvas {
                 let qy = (py - h / 2.0).abs() - (h / 2.0 - r);
                 let mut result = Vec::with_capacity(self.width as usize);
                 for (x, &(px, qx, a, b)) in columns.iter().enumerate() {
-                    let sd = shape_distance(px, py, w, h, r, mode, 12.0 * self.scale);
+                    let sd = dock_distance(px, py, w, h, r, attached, 12.0 * self.scale);
                     let limit = if self.border.get().is_some() {
                         -band as f32
                     } else {
@@ -1179,7 +1298,7 @@ impl Canvas {
                 }
                 result
             };
-            let top_rows = (top as i32 + band) as usize;
+            let top_rows = (top.ceil() as i32 + band) as usize;
             let bottom_rows = (pad as i32 + band) as usize;
             let upper = (0..top_rows)
                 .map(|y| row(y as f32 + 0.5 - top, true))
@@ -1191,6 +1310,7 @@ impl Canvas {
             *cache = Some(MaskCache {
                 radius,
                 mode,
+                attached,
                 style: self.border.get(),
                 width: self.width,
                 top: upper,

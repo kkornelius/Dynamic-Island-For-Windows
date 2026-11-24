@@ -5,6 +5,7 @@ Requirements: Windows x64, current stable Rust/MSVC, Visual Studio C++ Build Too
 The application runs without Rust or Python. `.cargo/config.toml` enables static CRT linking for Windows x64. `scripts/build-release.ps1` also remaps builder-specific paths in diagnostics. The PE verifier checks for extra VC++ runtime imports, personal Windows paths and embedded license notices.
 
 ```powershell
+python scripts/fetch-icons.py
 cargo build --release --locked
 .\target\release\dynamic-island-for-windows.exe
 ```
@@ -52,3 +53,14 @@ python scripts/generate-notices.py
 ```
 
 The script builds/checks the EXE, assembles curated docs/licenses, and writes the standalone EXE, ZIP and checksums under `dist/`. Regenerate embedded notices when dependencies/assets change.
+
+## Clean generated files
+
+After closing old builds, preview cleanup and then run it:
+
+```powershell
+.\scripts\clean.ps1 -BuildCache -Diagnostics -OldDistributions -WhatIf
+.\scripts\clean.ps1 -BuildCache -Diagnostics -OldDistributions
+```
+
+This removes Cargo build output, Python bytecode, temporary diagnostic profiles/captures and older distribution files. It keeps the version named in Cargo.toml in `dist/`, compact reports in `artifacts/release-validation/`, source, assets and public docs. App data under `%LOCALAPPDATA%` is outside its scope. The next build recreates its build cache.

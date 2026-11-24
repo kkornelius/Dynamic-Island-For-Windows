@@ -63,7 +63,7 @@ struct App {
     color_drag: Option<crate::color::Part>,
     color_dirty: bool,
     design_checks: std::collections::BTreeMap<&'static str, bool>,
-    water_frame: u64,
+    water_frame: Option<u64>,
     audio: Option<AudioWorker>,
     bluetooth: BluetoothWorker,
     tray: Tray,
@@ -72,13 +72,21 @@ struct App {
     scale: f32,
     size: (i32, i32),
     target: (i32, i32),
-    animation: Option<(Instant, (i32, i32))>,
+    animation: Option<crate::motion::Spring>,
+    dock_animation: Option<crate::motion::Dock>,
+    shown_notice: Option<(String, String)>,
+    frame_clock: crate::frame_clock::FrameClock,
+    frame_batch: bool,
+    frame_requested: bool,
+    frame_full: bool,
+    wake_due: Option<u64>,
     pulse_timer: bool,
     pulse_only: bool,
     content_epoch: Option<[u64; 5]>,
     pointer_timer: bool,
     peek_through: bool,
     fullscreen_hidden: bool,
+    fullscreen_blocker: Option<isize>,
     browser_hidden: bool,
     browser_fade: crate::visibility::Fade,
     browser_fade_timer: bool,
@@ -114,6 +122,7 @@ struct App {
     test_floating_restored: bool,
     test_floating_anchor: (i32, i32),
     test_pulse_source: Option<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>,
+    test_lyrics_media: Option<crate::media::MediaSnapshot>,
     test_pulse_frames: [u32; 6],
     test_water_seconds: std::collections::BTreeSet<u64>,
     test_moved_anchor: Option<(i32, i32)>,
@@ -159,7 +168,8 @@ impl App {
                 state.config.water.quiet_enabled = false;
             }
         }
-        let transition_profile = std::env::args().any(|a| a == "--profile-transitions");
+        let transition_profile =
+            std::env::args().any(|a| a == "--profile-transitions" || a == "--profile-docking");
         if transition_profile {
             state.config.stroke_enabled = !std::env::args().any(|a| a == "--no-stroke");
             state.config.stroke_color = 0xa69bff;
@@ -167,6 +177,10 @@ impl App {
             state.config.stroke_glow = 100;
             state.config.visualizer = false;
             state.config.water.enabled = false;
+            if std::env::args().any(|a| a == "--profile-docking") {
+                state.expanded = true;
+                state.tab = Tab::Settings;
+            }
             state.media = crate::media::MediaSnapshot {
                 available: true,
                 title: "Animation fixture".into(),
@@ -214,6 +228,7 @@ impl App {
             floating
         };
         let browser_worker = crate::browser_space::BrowserWorker::start(bus.clone());
+        let frame_clock = crate::frame_clock::FrameClock::new(bus.hwnd.clone());
         let mut app = Self {
             hwnd,
             state,
@@ -230,7 +245,7 @@ impl App {
             color_drag: None,
             color_dirty: false,
             design_checks: Default::default(),
-            water_frame: 0,
+            water_frame: None,
             audio,
             bluetooth,
             tray,
@@ -240,12 +255,20 @@ impl App {
             size: (ui::COMPACT_WIDTH, ui::COMPACT_HEIGHT),
             target: (ui::COMPACT_WIDTH, ui::COMPACT_HEIGHT),
             animation: None,
+            dock_animation: None,
+            shown_notice: None,
+            frame_clock,
+            frame_batch: false,
+            frame_requested: false,
+            frame_full: false,
+            wake_due: None,
             pulse_timer: false,
             pulse_only: false,
             content_epoch: None,
             pointer_timer: false,
             peek_through: false,
             fullscreen_hidden: false,
+            fullscreen_blocker: None,
             browser_hidden: false,
             browser_fade: Default::default(),
             browser_fade_timer: false,
@@ -283,6 +306,7 @@ impl App {
             test_floating_restored: false,
             test_floating_anchor: anchor,
             test_pulse_source: None,
+            test_lyrics_media: None,
             test_pulse_frames: [0; 6],
             test_water_seconds: Default::default(),
             test_moved_anchor: None,
@@ -320,25 +344,68 @@ impl App {
             return;
         }
         let target = self.desired_size();
+        let notice = self
+            .state
+            .notices
+            .front()
+            .map(|n| (n.title.clone(), n.detail.clone()));
+        let notice_changed = notice.is_some() && notice != self.shown_notice;
+        self.shown_notice = notice;
         if !animate {
             self.target = target;
             self.size = target;
             self.animation = None;
+            self.dock_animation = None;
             unsafe {
                 let _ = KillTimer(Some(self.hwnd), 2);
             }
         }
+        if animate && let Some(previous) = self.dock_animation {
+            if target != self.target {
+                self.clamp_position();
+                let to = self.dock_target(target);
+                self.dock_animation = Some(crate::motion::Dock::new(
+                    now_ms(),
+                    self.dock_pose(now_ms()),
+                    to,
+                    Some(previous),
+                ));
+                self.target = target;
+            }
+            return;
+        }
         if target != self.target {
+            let kind = if !self.state.notices.is_empty() {
+                crate::motion::Kind::Notice
+            } else if !self.state.expanded && self.target.1 > 82 {
+                crate::motion::Kind::Collapse
+            } else {
+                crate::motion::Kind::Resize
+            };
             self.target = target;
             if animate {
-                self.animation = Some((Instant::now(), self.size));
-                unsafe {
-                    SetTimer(Some(self.hwnd), 2, 15, None);
-                }
+                self.animation = Some(crate::motion::Spring::new(
+                    now_ms(),
+                    self.size,
+                    target,
+                    self.animation,
+                    kind,
+                ));
+                self.frame_clock.set_active(true);
             } else {
                 self.size = target;
                 self.animation = None;
             }
+        }
+        if animate && target == self.target && notice_changed && self.animation.is_none() {
+            self.animation = Some(crate::motion::Spring::new(
+                now_ms(),
+                self.size,
+                target,
+                None,
+                crate::motion::Kind::Notice,
+            ));
+            self.frame_clock.set_active(true);
         }
         self.clamp_position();
     }
@@ -391,13 +458,34 @@ impl App {
         }
     }
     fn body_rect(&self) -> [f32; 4] {
-        let a = self.fitted_anchor(self.size);
+        let pose = self.dock_pose(now_ms());
         [
-            a.0 as f32 - self.size.0 as f32 * self.scale / 2.0,
-            a.1 as f32,
+            pose.anchor[0] - self.size.0 as f32 * self.scale / 2.0,
+            pose.anchor[1],
             self.size.0 as f32 * self.scale,
             self.size.1 as f32 * self.scale,
         ]
+    }
+    fn dock_target(&self, size: (i32, i32)) -> crate::motion::DockPose {
+        let anchor = self.fitted_anchor(size);
+        crate::motion::DockPose {
+            anchor: [anchor.0 as f32, anchor.1 as f32],
+            size: [size.0 as f32, size.1 as f32],
+            attached: if self.state.config.dock_mode == crate::storage::DockMode::Anchored {
+                1.0
+            } else {
+                0.0
+            },
+        }
+    }
+    fn dock_pose(&self, now: u64) -> crate::motion::DockPose {
+        self.dock_animation
+            .map(|d| d.pose(now))
+            .unwrap_or_else(|| self.dock_target(self.size))
+    }
+    fn content_origin(&self) -> (f32, f32) {
+        let q = self.dock_pose(now_ms()).attached;
+        (ui::HALO as f32 + 12.0 * q, ui::HALO as f32 * (1.0 - q))
     }
     fn pointer_at(&mut self, now: u64, point: [f32; 2], own_window: bool) {
         if self.dragging || !self.surface_visible() || !self.state.notices.is_empty() {
@@ -494,20 +582,16 @@ impl App {
         if self.browser_fade.active(now) {
             // Fade-in uploads its initial (possibly zero-alpha) frame before showing the HWND.
             if !self.browser_hidden {
-                self.paint_now();
+                self.paint_immediate();
                 self.set_native_visible(true);
             }
-            if !self.browser_fade_timer {
-                unsafe {
-                    SetTimer(Some(self.hwnd), 9, 15, None);
-                }
-                self.browser_fade_timer = true;
-            }
+            self.browser_fade_timer = true;
+            self.frame_clock.set_active(true);
         } else {
             self.browser_fade.snap(!self.browser_hidden);
             self.stop_browser_fade_timer();
             if !self.browser_hidden {
-                self.paint_now();
+                self.paint_immediate();
             }
             self.set_native_visible(!self.browser_hidden);
         }
@@ -577,8 +661,12 @@ impl App {
         if self.self_test || self.transition_profile {
             return;
         }
-        if let Some(hidden) = crate::fullscreen::active(self.hwnd, self.anchor) {
-            self.set_fullscreen_hidden(hidden);
+        let (hidden, blocker) =
+            crate::fullscreen::active(self.hwnd, self.anchor, self.fullscreen_blocker);
+        self.fullscreen_blocker = blocker;
+        self.set_fullscreen_hidden(hidden);
+        if !hidden && self.base_visible() && !unsafe { IsWindowVisible(self.hwnd).as_bool() } {
+            self.sync_visibility();
         }
         self.browser_space_tick();
     }
@@ -591,6 +679,7 @@ impl App {
         if hidden {
             // Keep the current pixels/size throughout fade-out, including the glow.
             self.animation = None;
+            self.dock_animation = None;
             unsafe {
                 let _ = KillTimer(Some(self.hwnd), 2);
             }
@@ -802,15 +891,19 @@ impl App {
         }
         let started = Instant::now();
         let epoch = self.content_epoch(now_ms());
-        let partial =
-            if self.pulse_only && self.animation.is_none() && self.content_epoch == Some(epoch) {
-                ui::meter_rect(&self.state).map(|[x, y, w, h]| [x - 3, y - 3, w + 6, h + 6])
-            } else {
-                None
-            };
-        let display_anchor = self.fitted_anchor(self.size);
+        let partial = if self.pulse_only
+            && self.animation.is_none()
+            && self.dock_animation.is_none()
+            && self.content_epoch == Some(epoch)
+        {
+            ui::meter_rect(&self.state).map(|[x, y, w, h]| [x - 3, y - 3, w + 6, h + 6])
+        } else {
+            None
+        };
+        let pose = self.dock_pose(now_ms());
+        let top = (ui::HALO as f32 * (1.0 - pose.attached)).round() as i32;
         let width = self.size.0 + 2 * ui::HALO;
-        let height = self.size.1 + ui::top_inset(&self.state) + ui::HALO;
+        let height = self.size.1 + top + ui::HALO;
         let reusable = self
             .canvas
             .as_mut()
@@ -820,23 +913,33 @@ impl App {
                 width,
                 height,
                 ui::MEDIA_WIDTH + 24 + 2 * ui::HALO,
-                ui::HEIGHT + 2 * ui::HALO,
+                ui::HEIGHT + 24 + 2 * ui::HALO,
                 self.scale,
             )?);
         }
         let allocated = started.elapsed().as_secs_f64() * 1000.0;
         let alpha = self.browser_fade.alpha(now_ms(), self.state.config.opacity);
         let c = self.canvas.as_mut().unwrap();
+        c.set_dock_mix(self.dock_animation.map(|_| pose.attached));
         c.set_partial(if reusable { partial } else { None });
         let testing_pulse = self.test_pulse_source.is_some();
         c.profiling = self.transition_profile || testing_pulse;
-        self.hits = ui::draw(c, &self.state, now_ms(), &LocalTime::get());
+        let now = now_ms();
+        let local = LocalTime::get();
+        self.hits = if !self.state.expanded
+            && self.state.notices.is_empty()
+            && let Some(visual) = self.animation.and_then(|a| a.collapse_visual(now))
+        {
+            ui::draw_collapsing(c, &self.state, now, &local, self.size, visual)
+        } else {
+            ui::draw(c, &self.state, now, &local)
+        };
         c.finish()?;
         let drawn = started.elapsed().as_secs_f64() * 1000.0;
         c.present(
             self.hwnd,
-            display_anchor.0 - c.width / 2,
-            display_anchor.1 - (ui::top_inset(&self.state) as f32 * self.scale).round() as i32,
+            pose.anchor[0].round() as i32 - c.width / 2,
+            pose.anchor[1].round() as i32 - (top as f32 * self.scale).round() as i32,
             alpha,
             if self.state.expanded && self.state.notices.is_empty() {
                 28
@@ -888,7 +991,7 @@ impl App {
             self.frame_timings.push(FrameTiming {
                 width: self.size.0,
                 height: self.size.1,
-                animating: self.animation.is_some(),
+                animating: self.animation.is_some() || self.dock_animation.is_some(),
                 surface_ms: allocated,
                 mask_build_ms: phases[0],
                 mask_apply_ms: phases[1],
@@ -996,29 +1099,29 @@ impl App {
                 SetTimer(Some(self.hwnd), 8, 200, None);
                 self.fullscreen_timer = true;
             }
-            if pointer != self.pointer_timer {
-                if pointer {
-                    SetTimer(Some(self.hwnd), 7, 16, None);
-                } else {
-                    let _ = KillTimer(Some(self.hwnd), 7);
-                }
-                self.pointer_timer = pointer;
+            self.pointer_timer = pointer;
+            self.pulse_timer = pulse;
+            self.frame_clock.set_active(
+                pointer
+                    || pulse
+                    || self.animation.is_some()
+                    || self.dock_animation.is_some()
+                    || self.browser_fade_timer,
+            );
+            let delay = delay.clamp(16, 60_000);
+            let due = now.saturating_add(delay);
+            // Frequent media/status wakes must not replace an already-due
+            // WM_TIMER with the following second's deadline before it paints.
+            if self
+                .wake_due
+                .is_none_or(|previous| due.saturating_add(1) < previous)
+                && SetTimer(Some(self.hwnd), 1, delay as u32, None) != 0
+            {
+                self.wake_due = Some(due);
             }
-            if pulse != self.pulse_timer {
-                if pulse {
-                    SetTimer(Some(self.hwnd), 6, 15, None);
-                } else {
-                    let _ = KillTimer(Some(self.hwnd), 6);
-                }
-                self.pulse_timer = pulse;
-            }
-            SetTimer(Some(self.hwnd), 1, delay.clamp(16, 60_000) as u32, None);
         }
     }
     fn notify(&mut self, title: &str, detail: &str, tab: Tab) {
-        if !self.fullscreen_hidden && !self.browser_hidden {
-            self.tray.balloon(title, detail);
-        }
         self.state.notify(
             Notice {
                 title: title.into(),
@@ -1091,6 +1194,10 @@ impl App {
                     }
                 }
                 Event::Media(media) => {
+                    if self.test_lyrics_media.is_some() {
+                        self.test_lyrics_media = Some(media);
+                        continue;
+                    }
                     if self.transition_profile
                         || (self.self_test && (29..33).contains(&self.test_stage))
                     {
@@ -1217,10 +1324,23 @@ impl App {
     }
     fn paint(&mut self) {
         if self.animation.is_none() {
-            self.paint_now();
+            if self.frame_clock.is_active() && !self.frame_batch {
+                self.frame_requested = true;
+                self.frame_full |= !self.pulse_only;
+            } else {
+                self.paint_now();
+            }
         }
     }
     fn paint_now(&mut self) {
+        if self.frame_batch {
+            self.frame_requested = true;
+            self.frame_full |= !self.pulse_only;
+            return;
+        }
+        self.paint_immediate();
+    }
+    fn paint_immediate(&mut self) {
         self.color_dirty = false;
         if let Err(e) = self.render() {
             self.canvas = None;
@@ -1250,9 +1370,10 @@ impl App {
         }
     }
     fn color_point(&self, lp: LPARAM) -> (f32, f32) {
+        let (origin, top) = self.content_origin();
         (
-            lp.0 as i16 as f32 / self.scale - ui::surface_inset(&self.state) as f32,
-            (lp.0 >> 16) as i16 as f32 / self.scale - ui::top_inset(&self.state) as f32,
+            lp.0 as i16 as f32 / self.scale - origin,
+            (lp.0 >> 16) as i16 as f32 / self.scale - top,
         )
     }
     fn begin_color_drag(&mut self, x: f32, y: f32) -> bool {
@@ -1407,6 +1528,8 @@ impl App {
             0x5a if ctrl => self.state.note.editor.undo(shift),
             0x59 if ctrl => self.state.note.editor.undo(true),
             0x53 if ctrl => self.queue_note(true),
+            0x08 if ctrl => self.state.note.editor.delete_word(true),
+            0x2e if ctrl => self.state.note.editor.delete_word(false),
             0x2e => self.state.note.editor.delete(false),
             0x25 | 0x27 => self.state.note.editor.horizontal(key == 0x27, shift, ctrl),
             0x24 | 0x23 if ctrl => {
@@ -1477,7 +1600,8 @@ impl App {
             self.state.interaction.pin();
         }
         self.state.editing = Some(field);
-        self.state.edit_select_all = field == EditField::Stroke;
+        self.state.edit_select_all =
+            field == EditField::Stroke || matches!(field, EditField::Timer(_));
         unsafe {
             self.edit_previous = Some(GetForegroundWindow());
             let style = GetWindowLongW(self.hwnd, GWL_EXSTYLE) as u32 & !WS_EX_NOACTIVATE.0;
@@ -1487,6 +1611,9 @@ impl App {
         }
     }
     fn end_edit(&mut self) {
+        if let Some(EditField::Timer(part)) = self.state.editing {
+            self.commit_timer_input(part);
+        }
         if self.state.editing == Some(EditField::Note) {
             self.queue_note(true);
             self.note_surrogate = None;
@@ -1508,6 +1635,7 @@ impl App {
     }
     fn submit_edit(&mut self) {
         match self.state.editing {
+            Some(EditField::Timer(_)) => self.end_edit(),
             Some(EditField::Note) => self.end_edit(),
             Some(EditField::City) => {
                 let query = self.state.edit_text.trim().to_string();
@@ -1541,11 +1669,90 @@ impl App {
             None => {}
         }
     }
+    fn commit_timer_input(&mut self, part: crate::timer::Part) {
+        if self.state.timer.status != Status::Running
+            && let Some(seconds) =
+                part.replace(self.state.timer.duration_ms / 1000, &self.state.edit_text)
+            && seconds != self.state.timer.duration_ms / 1000
+        {
+            self.state.timer.set_seconds(seconds);
+            self.state.config.timer_seconds = seconds;
+            self.state.save();
+        }
+    }
+    fn edit_timer(&mut self, part: crate::timer::Part) {
+        if self.state.timer.status == Status::Running {
+            return;
+        }
+        if let Some(EditField::Timer(previous)) = self.state.editing {
+            self.commit_timer_input(previous);
+            self.state.editing = Some(EditField::Timer(part));
+        } else {
+            self.end_edit();
+            self.begin_edit(EditField::Timer(part));
+        }
+        self.state.edit_text = part.value(self.state.timer.duration_ms / 1000).to_string();
+        self.state.edit_select_all = true;
+        self.paint();
+    }
+    fn timer_char(&mut self, character: u32) {
+        let Some(EditField::Timer(part)) = self.state.editing else {
+            return;
+        };
+        match character {
+            9 => self.edit_timer(part.other()),
+            13 => self.end_edit(),
+            27 => {
+                self.state.edit_text.clear(); // Empty input cancels instead of changing the duration.
+                self.end_edit();
+            }
+            1 => self.state.edit_select_all = true,
+            8 => {
+                if self.state.edit_select_all {
+                    self.state.edit_text.clear();
+                } else {
+                    self.state.edit_text.pop();
+                }
+                self.state.edit_select_all = false;
+            }
+            22 => {
+                if let Ok(text) = crate::notes::clipboard::paste(self.hwnd)
+                    && part
+                        .replace(self.state.timer.duration_ms / 1000, &text)
+                        .is_some()
+                {
+                    self.state.edit_text = text.trim().to_string();
+                    self.state.edit_select_all = false;
+                }
+            }
+            48..=57 => {
+                if self.state.edit_select_all {
+                    self.state.edit_text.clear();
+                }
+                self.state.edit_select_all = false;
+                if self.state.edit_text.len() < 5 {
+                    self.state
+                        .edit_text
+                        .push(char::from_u32(character).unwrap());
+                }
+            }
+            _ => {}
+        }
+        self.schedule();
+        self.paint();
+    }
     fn action(&mut self, action: Action) {
         self.finish_color_drag();
         if matches!(
             action,
-            Action::Select(_) | Action::SettingsPage(_) | Action::Collapse | Action::Hide
+            Action::Select(_)
+                | Action::SettingsPage(_)
+                | Action::Collapse
+                | Action::Hide
+                | Action::Preset(_)
+                | Action::Duration(_)
+                | Action::TimerToggle
+                | Action::TimerReset
         ) {
             self.end_edit();
         }
@@ -1565,7 +1772,18 @@ impl App {
         let now = now_ms();
         let mut persist = false;
         match action {
+            Action::TimerEdit(part) => self.edit_timer(part),
             Action::NoteEdit => self.begin_edit(EditField::Note),
+            Action::IconAttribution => unsafe {
+                windows::Win32::UI::Shell::ShellExecuteW(
+                    Some(self.hwnd),
+                    w!("open"),
+                    w!("https://icons8.com/"),
+                    None,
+                    None,
+                    SW_SHOWNORMAL,
+                );
+            },
             Action::WeatherAttribution => unsafe {
                 windows::Win32::UI::Shell::ShellExecuteW(
                     None,
@@ -1636,6 +1854,8 @@ impl App {
             }
             Action::Dock(mode) => {
                 if mode != self.state.config.dock_mode {
+                    let from = self.dock_pose(now);
+                    let previous = self.dock_animation;
                     if self.state.config.dock_mode == crate::storage::DockMode::Floating {
                         self.state.config.position = Some([self.anchor.0, self.anchor.1]);
                     } else {
@@ -1655,6 +1875,18 @@ impl App {
                             .unwrap_or_else(|| default_anchor(self.scale))
                     };
                     self.state.config.dock_mode = mode;
+                    self.clamp_position();
+                    if self.surface_visible() {
+                        self.target = self.desired_size();
+                        self.animation = None;
+                        self.dock_animation = Some(crate::motion::Dock::new(
+                            now,
+                            from,
+                            self.dock_target(self.target),
+                            previous,
+                        ));
+                        self.frame_clock.set_active(true);
+                    }
                     persist = true;
                 }
             }
@@ -1854,6 +2086,7 @@ impl App {
                 persist = true;
             }
             Action::ResetPosition => {
+                self.dock_animation = None;
                 if self.state.config.dock_mode == crate::storage::DockMode::Anchored {
                     self.anchor = anchored_anchor(self.anchor);
                     self.state.config.anchored_position = Some([self.anchor.0, self.anchor.1]);
@@ -1965,6 +2198,7 @@ impl App {
             self.tray = tray;
             self.hwnd = new;
             self.bus.hwnd.store(new.0 as isize, Ordering::Release);
+            self.frame_clock.acknowledge();
             SetWindowLongPtrW(old, GWLP_USERDATA, 0);
             let _ = DestroyWindow(old);
             if self.surface_visible() {
@@ -1980,6 +2214,8 @@ impl App {
                 )?;
             }
             self.animation = None;
+            self.dock_animation = None;
+            self.wake_due = None;
             self.pulse_timer = false;
             self.pointer_timer = false;
             self.fullscreen_timer = false;
@@ -2041,25 +2277,76 @@ impl App {
             }
         }
     }
+    fn frame_tick(&mut self) {
+        self.frame_batch = true;
+        if self.browser_fade_timer {
+            self.browser_fade_tick(now_ms());
+        } else {
+            if self.pointer_timer {
+                self.pointer_tick();
+            }
+            if let Some(dock) = self.dock_animation {
+                let now = now_ms();
+                let pose = dock.pose(now);
+                self.size = (pose.size[0].round() as i32, pose.size[1].round() as i32);
+                if dock.done(now) {
+                    self.size = self.target;
+                    self.dock_animation = None;
+                }
+                self.paint_now();
+            } else if self.animation.is_some() {
+                self.animate();
+            } else if self.pulse_timer {
+                self.pulse_tick();
+            }
+        }
+        self.frame_batch = false;
+        if self.frame_requested {
+            self.pulse_only = !self.frame_full;
+            self.paint_immediate();
+            self.pulse_only = false;
+        }
+        self.frame_requested = false;
+        self.frame_full = false;
+        self.frame_clock.set_active(
+            self.pointer_timer
+                || self.pulse_timer
+                || self.animation.is_some()
+                || self.dock_animation.is_some()
+                || self.browser_fade_timer,
+        );
+    }
     fn animate(&mut self) {
-        if let Some((start, from)) = self.animation {
-            let t = (start.elapsed().as_secs_f32() / 0.12).min(1.0);
-            let eased = 1.0 - (1.0 - t).powi(3);
+        if let Some(spring) = self.animation {
+            let (size, done) = spring.size(now_ms());
             self.size = (
-                from.0 + ((self.target.0 - from.0) as f32 * eased) as i32,
-                from.1 + ((self.target.1 - from.1) as f32 * eased) as i32,
+                size.0.clamp(ui::COMPACT_WIDTH - 24, ui::MEDIA_WIDTH + 24),
+                size.1.clamp(ui::COMPACT_HEIGHT - 24, ui::HEIGHT + 24),
             );
-            if t >= 1.0 {
+            if done {
                 self.size = self.target;
                 self.animation = None;
-                unsafe {
-                    let _ = KillTimer(Some(self.hwnd), 2);
-                }
             }
             self.paint_now();
         }
     }
     fn profile_transition(&mut self) {
+        if std::env::args().any(|a| a == "--profile-docking") {
+            if self.profile_stage >= 8 {
+                unsafe {
+                    let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            } else {
+                let mode = if self.profile_stage.is_multiple_of(2) {
+                    crate::storage::DockMode::Anchored
+                } else {
+                    crate::storage::DockMode::Floating
+                };
+                self.profile_stage += 1;
+                self.action(Action::Dock(mode));
+            }
+            return;
+        }
         let stages = [
             (Tab::Media, true, false),
             (Tab::Media, true, true),
@@ -2090,6 +2377,8 @@ impl App {
             2 => Some(Action::Select(Tab::Settings)),
             3 => Some(Action::Hide),
             4 => Some(Action::ResetPosition),
+            6 => Some(Action::WeatherAttribution),
+            7 => Some(Action::IconAttribution),
             9 => Some(Action::Quit),
             _ => None,
         };
@@ -2169,8 +2458,9 @@ impl App {
     }
     fn test_click(&self, x: i32, y: i32) {
         unsafe {
-            let px = ((x + ui::surface_inset(&self.state)) as f32 * self.scale) as u32;
-            let py = ((y + ui::top_inset(&self.state)) as f32 * self.scale) as u32;
+            let (origin, top) = self.content_origin();
+            let px = ((x as f32 + origin) * self.scale).round() as u32;
+            let py = ((y as f32 + top) * self.scale).round() as u32;
             let _ = PostMessageW(
                 Some(self.hwnd),
                 WM_LBUTTONUP,
@@ -2202,10 +2492,16 @@ impl App {
         }
         hasher.finish()
     }
-    fn frame_hash(&self) -> u64 {
+    fn frame_hash(&self) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        if let Some(c) = &self.canvas {
+        let c = self.canvas.as_ref()?;
+        if ((254.0 + ui::top_inset(&self.state) as f32) * c.scale) as i32 > c.height
+            || ((135.0 + ui::surface_inset(&self.state) as f32) * c.scale) as i32 > c.width
+        {
+            return None;
+        }
+        {
             unsafe {
                 let pixels = std::slice::from_raw_parts(c.bits, (c.stride * c.height * 4) as usize);
                 for y in ((112.0 + ui::top_inset(&self.state) as f32) * c.scale) as usize
@@ -2221,7 +2517,7 @@ impl App {
                 }
             }
         }
-        hasher.finish()
+        Some(hasher.finish())
     }
     fn test_tick(&mut self) {
         if !self.self_test {
@@ -2232,19 +2528,29 @@ impl App {
         if stage <= self.test_stage {
             return;
         }
+        // A delayed/coalesced WM_TIMER must not skip an interaction step.
+        let stage = self.test_stage + 1;
         self.test_stage = stage;
+        self.trace(&format!(
+            "self-test stage {stage}: visible={} peek={} fullscreen={} browser={} expanded={}",
+            self.state.visible,
+            self.peek_through,
+            self.fullscreen_hidden,
+            self.browser_hidden,
+            self.state.expanded,
+        ));
         let folder = self.state.store.directory.join("renders");
         let _ = std::fs::create_dir_all(&folder);
         match stage {
             1 => {
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("compact.bmp"));
                 }
                 self.test_click(126, 29);
             }
             2 => {
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("media.bmp"));
                 }
@@ -2271,14 +2577,14 @@ impl App {
                 self.state.expanded = true;
                 self.state.tab = Tab::Timer;
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("timer.bmp"));
                 }
             }
             7 => {
                 self.state.tab = Tab::Water;
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("water.bmp"));
                 }
@@ -2287,14 +2593,14 @@ impl App {
             8 => {
                 self.state.tab = Tab::Settings;
                 self.state.settings_page = 0;
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("settings.bmp"));
                 }
             }
             9 => {
                 self.state.settings_page = 1;
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("features.bmp"));
                 }
@@ -2326,7 +2632,7 @@ impl App {
                 self.test_anchored = self.anchor.1 == anchored_anchor(self.anchor).1
                     && self.state.config.dock_mode == crate::storage::DockMode::Anchored
                     && self.size.0 == ui::WIDTH + 24;
-                self.paint();
+                self.paint_now();
                 if let Some(c) = &self.canvas {
                     let _ = c.save_bmp(&folder.join("anchored-settings.bmp"));
                 }
@@ -2345,9 +2651,21 @@ impl App {
                     self.anchor == self.test_floating_anchor,
                 );
                 self.state.show_lyrics = false;
+                // Exercise the real lyrics button without depending on a
+                // song being open in another application during this test.
+                self.test_lyrics_media = Some(std::mem::replace(
+                    &mut self.state.media,
+                    crate::media::MediaSnapshot {
+                        available: true,
+                        title: "Local interaction fixture".into(),
+                        artist: "Diagnostic".into(),
+                        source: "Spotify".into(),
+                        ..Default::default()
+                    },
+                ));
                 self.action(Action::Select(Tab::Media));
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 if self.state.media.available {
                     self.test_click(138, 218);
                 }
@@ -2373,6 +2691,9 @@ impl App {
                 self.test_click(r[0] + 20, r[1] + 20);
             }
             19 => {
+                if let Some(media) = self.test_lyrics_media.take() {
+                    self.state.media = media;
+                }
                 self.design_checks
                     .insert("weather_dock_click", self.state.tab == Tab::Weather);
                 self.action(Action::WeatherSearch);
@@ -2443,13 +2764,15 @@ impl App {
                 self.state.notices.clear();
                 self.action(Action::Select(Tab::Water));
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 self.water_frame = self.frame_hash();
             }
             23 => {
-                self.paint();
-                self.design_checks
-                    .insert("tumbler_static", self.water_frame == self.frame_hash());
+                self.paint_now();
+                self.design_checks.insert(
+                    "tumbler_static",
+                    self.water_frame.is_some() && self.water_frame == self.frame_hash(),
+                );
                 self.test_click(120, 410);
             }
             24 => {
@@ -2539,7 +2862,7 @@ impl App {
                 self.state.expanded = false;
                 self.state.interaction = Default::default();
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 let b = self.body_rect();
                 let p = [b[0] + b[2] / 2.0, b[1] + b[3] / 2.0];
                 let now = now_ms();
@@ -2591,7 +2914,7 @@ impl App {
                 self.action(Action::Select(Tab::Settings));
                 self.state.settings_page = 0;
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 self.begin_move();
                 unsafe {
                     let mut r = RECT::default();
@@ -2645,7 +2968,7 @@ impl App {
                 self.action(Action::Collapse);
                 self.state.interaction = Default::default();
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 self.state.media.playing = false;
                 self.state.timer.reset();
                 let b = self.body_rect();
@@ -3049,7 +3372,7 @@ impl App {
                 self.action(Action::Select(Tab::Settings));
                 self.action(Action::SettingsPage(0));
                 self.layout(false);
-                self.paint();
+                self.paint_now();
                 self.test_click(405, 480);
             }
             65 => {
@@ -3068,7 +3391,136 @@ impl App {
                     !self.state.startup.registered,
                 );
             }
-            67.. => unsafe {
+            67 => {
+                self.action(Action::Select(Tab::Notes));
+                self.state.note.editor.select_all();
+                self.state.note.editor.insert("hapus satu kata 🥤");
+                unsafe {
+                    let mut original = [0u8; 256];
+                    if GetKeyboardState(&mut original).is_ok() {
+                        let mut ctrl = original;
+                        ctrl[VK_CONTROL.0 as usize] = 0x80;
+                        if SetKeyboardState(&ctrl).is_ok() {
+                            self.note_key(VK_BACK.0);
+                            self.note_key(VK_BACK.0);
+                            let words = self.state.note.editor.text == "hapus satu ";
+                            self.note_char(127);
+                            self.design_checks.insert(
+                                "notes_ctrl_backspace_deletes_words_once",
+                                words && self.state.note.editor.text == "hapus satu ",
+                            );
+                            self.state.note.editor.select(0, false);
+                            self.note_key(VK_DELETE.0);
+                            self.design_checks.insert(
+                                "notes_ctrl_delete_uses_next_word",
+                                self.state.note.editor.text == "satu ",
+                            );
+                            self.note_key(0x5a);
+                            self.design_checks.insert(
+                                "notes_word_delete_undo_keeps_text",
+                                self.state.note.editor.text == "hapus satu ",
+                            );
+                            let _ = SetKeyboardState(&original);
+                        }
+                    }
+                }
+            }
+            68 => {
+                self.action(Action::Select(Tab::Timer));
+                self.state.timer.set_seconds(60);
+                self.layout(false);
+                self.paint_now();
+                self.test_click(115, 353);
+                self.test_type("2\t30\r");
+            }
+            69 => {
+                self.design_checks.insert(
+                    "timer_typed_minutes_seconds_and_tab",
+                    self.state.timer.duration_ms == 150_000 && self.state.editing.is_none(),
+                );
+                self.paint_now();
+                if let Some(c) = &self.canvas {
+                    let _ = c.save_bmp(&folder.join("timer-input.bmp"));
+                }
+                self.action(Action::TimerToggle);
+                self.action(Action::TimerEdit(crate::timer::Part::Minutes));
+                self.design_checks.insert(
+                    "running_timer_rejects_duration_edit",
+                    self.state.timer.status == Status::Running && self.state.editing.is_none(),
+                );
+                self.action(Action::TimerToggle);
+                self.action(Action::TimerEdit(crate::timer::Part::Seconds));
+                self.timer_char('9' as u32);
+                self.timer_char(27);
+                self.design_checks.insert(
+                    "timer_escape_preserves_duration",
+                    self.state.timer.duration_ms == 150_000,
+                );
+                self.action(Action::TimerEdit(crate::timer::Part::Minutes));
+                self.timer_char('3' as u32);
+                self.end_edit();
+                self.action(Action::TimerEdit(crate::timer::Part::Seconds));
+                self.test_type("75");
+                unsafe {
+                    let _ = PostMessageW(
+                        Some(self.hwnd),
+                        WM_ACTIVATE,
+                        WPARAM(WA_INACTIVE as usize),
+                        LPARAM(0),
+                    );
+                }
+            }
+            70 => {
+                self.design_checks.insert(
+                    "timer_blur_commits_and_normalizes_seconds",
+                    self.state.timer.duration_ms == 255_000 && self.state.editing.is_none(),
+                );
+                self.design_checks.insert(
+                    "timer_typed_duration_persists",
+                    self.state.store.load().0.timer_seconds == 255,
+                );
+                self.action(Action::Select(Tab::Settings));
+                self.action(Action::SettingsPage(0));
+                self.action(Action::Dock(crate::storage::DockMode::Floating));
+            }
+            71 => {
+                let before = self.dock_pose(now_ms());
+                let start = now_ms();
+                self.action(Action::Dock(crate::storage::DockMode::Anchored));
+                if let Some(dock) = self.dock_animation {
+                    let first = dock.pose(start);
+                    let middle = dock.pose(start + 190);
+                    self.design_checks.insert(
+                        "dock_starts_at_current_position",
+                        (first.anchor[0] - before.anchor[0]).abs() < 1.0
+                            && (first.anchor[1] - before.anchor[1]).abs() < 1.0,
+                    );
+                    self.design_checks.insert(
+                        "dock_has_intermediate_shape_and_width",
+                        middle.attached > 0.2
+                            && middle.attached < 0.8
+                            && middle.size[0] > ui::WIDTH as f32
+                            && middle.size[0] < (ui::WIDTH + 24) as f32,
+                    );
+                    let before_reverse = self.dock_pose(now_ms());
+                    self.action(Action::Dock(crate::storage::DockMode::Floating));
+                    let reversed = self.dock_pose(now_ms());
+                    self.design_checks.insert(
+                        "dock_reverses_without_position_jump",
+                        (before_reverse.anchor[0] - reversed.anchor[0]).abs() < 2.0
+                            && (before_reverse.anchor[1] - reversed.anchor[1]).abs() < 2.0,
+                    );
+                }
+            }
+            72 => {
+                self.design_checks.insert(
+                    "dock_finishes_with_correct_floating_geometry",
+                    self.dock_animation.is_none()
+                        && self.size == (ui::WIDTH, ui::HEIGHT)
+                        && self.state.config.dock_mode == crate::storage::DockMode::Floating,
+                );
+            }
+            73.. => unsafe {
                 let ex = WINDOW_EX_STYLE(GetWindowLongW(self.hwnd, GWL_EXSTYLE) as u32);
                 let report = serde_json::json!({
                     "layered":ex.contains(WS_EX_LAYERED),
@@ -3254,6 +3706,11 @@ pub fn run() -> Result<()> {
 }
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
+        // Nested message loops must release the wake slot even if App cannot
+        // be borrowed. The next frame retries instead of freezing the clock.
+        if msg == crate::frame_clock::FRAME_MESSAGE {
+            crate::frame_clock::acknowledge_message();
+        }
         if msg == WM_DESTROY {
             if GetWindowLongPtrW(hwnd, GWLP_USERDATA) != 0 {
                 PostQuitMessage(0);
@@ -3291,6 +3748,10 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
         };
         let app = &mut *borrowed;
         match msg {
+            crate::frame_clock::FRAME_MESSAGE => {
+                app.frame_tick();
+                LRESULT(0)
+            }
             WM_MOUSEACTIVATE => LRESULT(if app.state.editing.is_some() {
                 MA_ACTIVATE
             } else {
@@ -3308,6 +3769,18 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_CHAR if app.state.editing == Some(EditField::Note) => {
                 app.note_char(wp.0 as u32);
+                LRESULT(0)
+            }
+            WM_CHAR if matches!(app.state.editing, Some(EditField::Timer(_))) => {
+                app.timer_char(wp.0 as u32);
+                LRESULT(0)
+            }
+            WM_KEYDOWN if matches!(app.state.editing, Some(EditField::Timer(_))) => {
+                if wp.0 as u16 == VK_DELETE.0 && app.state.edit_select_all {
+                    app.state.edit_text.clear();
+                    app.state.edit_select_all = false;
+                    app.paint();
+                }
                 LRESULT(0)
             }
             WM_CHAR if app.state.editing.is_some() => {
@@ -3360,6 +3833,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             WM_TIMER => {
                 match wp.0 {
                     1 => {
+                        app.wake_due = None;
                         app.tick();
                         app.paint();
                     }
@@ -3430,9 +3904,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     return LRESULT(0);
                 }
                 if app.animation.is_none() || app.state.expanded {
-                    let x = (lp.0 as i16 as f32 / app.scale) as i32 - ui::surface_inset(&app.state);
-                    let y =
-                        ((lp.0 >> 16) as i16 as f32 / app.scale) as i32 - ui::top_inset(&app.state);
+                    let (x, y) = app.color_point(lp);
+                    let (x, y) = (x as i32, y as i32);
                     if let Some(action) = app
                         .hits
                         .iter()
@@ -3446,6 +3919,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 LRESULT(0)
             }
             WM_NCHITTEST => {
+                // Diagnostic clicks are posted directly. Ignore the real
+                // desktop pointer/Alt state while deterministic fixtures run.
+                if app.self_test || app.transition_profile {
+                    return LRESULT(HTTRANSPARENT as isize);
+                }
                 let mut p = POINT {
                     x: lp.0 as i16 as i32,
                     y: (lp.0 >> 16) as i16 as i32,
@@ -3471,9 +3949,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 if app.canvas.as_ref().is_none_or(|c| !c.hit_test(p.x, p.y)) {
                     return LRESULT(HTTRANSPARENT as isize);
                 }
-                let x = (p.x as f32 / app.scale) as i32 - ui::surface_inset(&app.state);
-                let y = (p.y as f32 / app.scale) as i32 - ui::top_inset(&app.state);
+                let (origin, top) = app.content_origin();
+                let x = (p.x as f32 / app.scale - origin) as i32;
+                let y = (p.y as f32 / app.scale - top) as i32;
                 if app.state.expanded
+                    && app.dock_animation.is_none()
                     && app.state.notices.is_empty()
                     && y < 48
                     && x < ui::expanded_width(&app.state) - 65
@@ -3494,8 +3974,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     app.drag_color(x, y);
                     return LRESULT(0);
                 }
-                let x = (lp.0 as i16 as f32 / app.scale) as i32 - ui::surface_inset(&app.state);
-                let y = ((lp.0 >> 16) as i16 as f32 / app.scale) as i32 - ui::top_inset(&app.state);
+                let (x, y) = app.color_point(lp);
+                let (x, y) = (x as i32, y as i32);
                 let action = app
                     .hits
                     .iter()
@@ -3509,7 +3989,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 if action.is_some()
                     && let Ok(cursor) = LoadCursorW(
                         None,
-                        if action == Some(Action::NoteEdit) {
+                        if matches!(action, Some(Action::NoteEdit | Action::TimerEdit(_))) {
                             IDC_IBEAM
                         } else {
                             IDC_HAND
@@ -3592,10 +4072,13 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_DISPLAYCHANGE => {
                 app.clamp_position();
+                app.fullscreen_tick();
+                app.schedule();
                 app.paint();
                 LRESULT(0)
             }
             WM_POWERBROADCAST | WM_TIMECHANGE => {
+                app.fullscreen_tick();
                 app.tick();
                 app.paint();
                 LRESULT(1)

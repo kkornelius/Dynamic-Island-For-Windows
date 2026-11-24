@@ -26,6 +26,9 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+# Icons8 source images are licensed for app embedding, not raw redistribution.
+/assets/icons8/*.png
+
 # Historical/internal notes stay local; public docs are curated.
 /docs/*
 !/docs/ARCHITECTURE.md

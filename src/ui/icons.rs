@@ -8,7 +8,6 @@ pub enum Icon {
     Timer,
     Water,
     Notes,
-    Info,
     Settings,
     Lyrics,
     Play,
@@ -38,6 +37,9 @@ pub fn device(kind: DeviceKind) -> Icon {
 }
 pub fn draw(c: &Canvas, icon: Icon, x: i32, y: i32, size: i32, color: u32) {
     if !c.visible([x - 2, y - 2, size + 4, size + 4]) {
+        return;
+    }
+    if super::icon_assets::draw(c, icon, x, y, size, color) {
         return;
     }
     let k = size as f32 / 24.0;
@@ -84,16 +86,6 @@ pub fn draw(c: &Canvas, icon: Icon, x: i32, y: i32, size: i32, color: u32) {
         );
     };
     match icon {
-        Icon::Info => {
-            round(3., 3., 18., 18., 9.);
-            line(12., 11., 12., 17.);
-            c.circle(
-                x + (11. * k) as i32,
-                y + (6.5 * k) as i32,
-                (2. * k).max(1.) as i32,
-                color,
-            );
-        }
         Icon::Notes => {
             round(4., 3., 16., 18., 3.);
             line(8., 8., 16., 8.);

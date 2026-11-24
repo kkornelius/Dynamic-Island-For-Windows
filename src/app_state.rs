@@ -52,6 +52,7 @@ pub enum Action {
     TimerReset,
     Preset(u64),
     Duration(i32),
+    TimerEdit(crate::timer::Part),
     WaterConfirm,
     WaterSnooze,
     WaterToggle,
@@ -77,6 +78,7 @@ pub enum Action {
     WeatherChoose(usize),
     WeatherRefresh,
     WeatherAttribution,
+    IconAttribution,
 }
 #[derive(Clone)]
 pub struct Notice {
@@ -200,6 +202,7 @@ impl State {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EditField {
+    Timer(crate::timer::Part),
     Note,
     City,
     Stroke,

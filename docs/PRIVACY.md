@@ -26,7 +26,11 @@ Providers receive normal connection information, including the requesting IP add
 
 ## Desktop/devices
 
-Pointer position is processed locally for hover/eyes. Fullscreen/browser avoidance examines window/control geometry. Bluetooth notices use paired-device properties. These features do not upload browser history, screen recordings or device names.
+Pointer position is processed locally for hover/eyes. Fullscreen/browser avoidance examines window/control geometry and edit focus. Address-bar avoidance does not read the entered URL/search text, page content or history. Bluetooth notices use paired-device properties. These features do not upload browser history, screen recordings or device names.
+
+## Browser playback correction
+
+For browser YouTube playback, the app can cross-check stale Windows media metadata against the browser window caption and the player's seek/play/pause accessibility controls. It reads numeric playback position/duration and control labels only. It does not retrieve URLs, address/search field values, comments, page body text, cookies or browser history. Checks run on the media worker and do not require a browser extension.
 
 ## Removal
 

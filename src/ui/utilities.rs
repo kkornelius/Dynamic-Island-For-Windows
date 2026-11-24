@@ -28,7 +28,7 @@ pub(super) fn timer(v: &mut View<'_>, now: u64) {
             Status::Running => "Your timer is running",
             Status::Paused => "Paused. Ready when you are.",
             Status::Finished => "Timer complete",
-            _ => "Set a little time aside",
+            _ => "Click minutes or seconds to type",
         },
         260,
         22,
@@ -56,17 +56,7 @@ pub(super) fn timer(v: &mut View<'_>, now: u64) {
         false,
         enabled,
     );
-    v.c.text(
-        &format!("{} min", t.duration_ms / 60000),
-        79,
-        338,
-        74,
-        30,
-        13,
-        false,
-        WHITE,
-        true,
-    );
+    timer_input(v, crate::timer::Part::Minutes, 79, enabled);
     v.button(
         "+",
         [158, 338, 30, 30],
@@ -81,17 +71,7 @@ pub(super) fn timer(v: &mut View<'_>, now: u64) {
         false,
         enabled,
     );
-    v.c.text(
-        &format!("{} sec", t.duration_ms / 1000 % 60),
-        303,
-        338,
-        74,
-        30,
-        13,
-        false,
-        WHITE,
-        true,
-    );
+    timer_input(v, crate::timer::Part::Seconds, 303, enabled);
     v.button("+", [382, 338, 30, 30], Action::Duration(1), false, enabled);
     v.button(
         match t.status {
@@ -106,6 +86,58 @@ pub(super) fn timer(v: &mut View<'_>, now: u64) {
         true,
     );
     v.button("Reset", [316, 380, 96, 34], Action::TimerReset, false, true);
+}
+fn timer_input(v: &mut View<'_>, part: crate::timer::Part, x: i32, enabled: bool) {
+    let editing = v.s.editing == Some(EditField::Timer(part));
+    let action = Action::TimerEdit(part);
+    v.c.round(x, 338, 74, 30, 9, if enabled { CARD } else { BG });
+    if editing {
+        v.c.outline(x, 338, 74, 30, 9, 0xbebebe, 1.0);
+        if v.s.edit_select_all {
+            v.c.round(x + 5, 343, 40, 20, 4, 0x484848);
+        }
+    }
+    let value = if editing {
+        format!(
+            "{}{}",
+            v.s.edit_text,
+            if v.s.edit_select_all { "" } else { "│" }
+        )
+    } else {
+        part.value(v.s.timer.duration_ms / 1000).to_string()
+    };
+    v.c.text(
+        &value,
+        x + 3,
+        338,
+        45,
+        30,
+        13,
+        false,
+        if enabled { WHITE } else { DIM },
+        true,
+    );
+    v.c.text(
+        if part == crate::timer::Part::Minutes {
+            "min"
+        } else {
+            "sec"
+        },
+        x + 46,
+        338,
+        25,
+        30,
+        10,
+        false,
+        MUTED,
+        true,
+    );
+    if enabled {
+        v.hits.push(Hit {
+            rect: [x, 338, 74, 30],
+            action,
+        });
+    }
 }
 pub(super) fn water(v: &mut View<'_>, now: u64) {
     if v.s.water_schedule {

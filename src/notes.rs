@@ -77,22 +77,32 @@ impl Editor {
         self.revision += 1;
     }
     pub fn delete(&mut self, backwards: bool) {
+        self.erase(backwards, false);
+    }
+    pub fn delete_word(&mut self, backwards: bool) {
+        self.erase(backwards, true);
+    }
+    fn erase(&mut self, backwards: bool, word: bool) {
         let original = (self.cursor, self.anchor, self.revision);
         if self.selection().is_empty() {
-            let p = if backwards {
-                self.text[..self.cursor]
-                    .char_indices()
-                    .next_back()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0)
+            if word {
+                self.horizontal(!backwards, true, true);
             } else {
-                self.text[self.cursor..]
-                    .chars()
-                    .next()
-                    .map(|c| self.cursor + c.len_utf8())
-                    .unwrap_or(self.cursor)
-            };
-            self.anchor = p;
+                let p = if backwards {
+                    self.text[..self.cursor]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0)
+                } else {
+                    self.text[self.cursor..]
+                        .chars()
+                        .next()
+                        .map(|c| self.cursor + c.len_utf8())
+                        .unwrap_or(self.cursor)
+                };
+                self.anchor = p;
+            }
         }
         self.insert("");
         if self.revision != original.2
@@ -389,6 +399,37 @@ pub mod clipboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn word_deletion_handles_unicode_selection_and_undo() {
+        let mut e = Editor::default();
+        e.insert("satu dua café 🥤  ");
+        let original = e.text.clone();
+        let caret = e.cursor;
+        e.delete_word(true);
+        assert_eq!(e.text, "satu dua café ");
+        e.undo(false);
+        assert_eq!(e.text, original);
+        assert_eq!(e.cursor, caret);
+        assert!(e.selection().is_empty());
+        e.undo(true);
+        assert_eq!(e.text, "satu dua café ");
+        e.delete_word(true);
+        assert_eq!(e.text, "satu dua ");
+        e.select(0, false);
+        e.delete_word(false);
+        assert_eq!(e.text, "dua ");
+        e.select_all();
+        e.delete_word(true);
+        assert!(e.text.is_empty());
+        let revision = e.revision;
+        e.delete_word(true);
+        assert_eq!(e.revision, revision);
+        e.insert("baris pertama\nbaris kedua");
+        e.select(3, false);
+        e.select(8, true);
+        e.delete_word(true);
+        assert_eq!(e.text, "barrtama\nbaris kedua");
+    }
     #[test]
     fn unicode_selection_newlines_and_undo() {
         let mut e = Editor::default();

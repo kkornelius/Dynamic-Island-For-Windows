@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$stage = $null
 Push-Location $root
 try {
     python scripts/generate-notices.py
@@ -32,7 +33,7 @@ try {
         Copy-Item -LiteralPath (Join-Path 'docs\media' $picture) -Destination $media
     }
     # Keep relative credit links usable in the extracted package.
-    foreach ($relative in @('assets\fonts\OFL.txt', 'assets\sounds\README.md', 'assets\licenses\NOTICES.txt')) {
+    foreach ($relative in @('assets\fonts\OFL.txt', 'assets\sounds\README.md', 'assets\licenses\NOTICES.txt', 'assets\icons8\README.md', 'assets\icons8\manifest.json')) {
         $destination = Join-Path $stage $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $relative -Destination $destination
@@ -49,4 +50,14 @@ try {
     }
     $hashes | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
     Get-Item -LiteralPath $standalone, $archive, (Join-Path $dist 'SHA256SUMS.txt') | Select-Object Name, Length
-} finally { Pop-Location }
+} finally {
+    if ($stage -and (Test-Path -LiteralPath $stage)) {
+        $absolute = (Resolve-Path -LiteralPath $stage).ProviderPath
+        $allowed = [IO.Path]::GetFullPath((Join-Path $root 'artifacts\public-release')).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $absolute.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Refusing to remove a package stage outside its generated directory.'
+        }
+        Remove-Item -LiteralPath $absolute -Recurse -Force
+    }
+    Pop-Location
+}

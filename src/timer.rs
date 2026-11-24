@@ -6,6 +6,39 @@ pub enum Status {
     Paused,
     Finished,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    Minutes,
+    Seconds,
+}
+impl Part {
+    pub fn value(self, seconds: u64) -> u64 {
+        match self {
+            Self::Minutes => seconds / 60,
+            Self::Seconds => seconds % 60,
+        }
+    }
+    pub fn replace(self, seconds: u64, text: &str) -> Option<u64> {
+        let text = text.trim();
+        if text.is_empty() || text.len() > 5 || !text.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let value = text.parse::<u64>().ok()?;
+        Some(
+            match self {
+                Self::Minutes => value * 60 + seconds % 60,
+                Self::Seconds => seconds / 60 * 60 + value,
+            }
+            .clamp(1, 86_400),
+        )
+    }
+    pub fn other(self) -> Self {
+        match self {
+            Self::Minutes => Self::Seconds,
+            Self::Seconds => Self::Minutes,
+        }
+    }
+}
 
 pub struct Countdown {
     pub duration_ms: u64,
@@ -89,6 +122,17 @@ pub fn format_duration(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn typed_parts_normalize_seconds_and_enforce_timer_limits() {
+        assert_eq!(Part::Minutes.replace(2700, "2"), Some(120));
+        assert_eq!(Part::Seconds.replace(120, "90"), Some(210));
+        assert_eq!(Part::Minutes.replace(45, "0"), Some(45));
+        assert_eq!(Part::Seconds.replace(1, "0"), Some(1));
+        assert_eq!(Part::Minutes.replace(59, "99999"), Some(86400));
+        for invalid in ["", "-5", "1.5", "12m", "１２", "100000"] {
+            assert_eq!(Part::Seconds.replace(60, invalid), None);
+        }
+    }
     #[test]
     fn pause_resume_keeps_fractional_seconds() {
         let mut t = Countdown::new(60);

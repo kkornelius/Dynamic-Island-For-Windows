@@ -54,20 +54,32 @@ impl MediaWorker {
                         Ok(())
                     }))?;
                 let mut watched: Option<Watched> = None;
+                let mut transport_watchers: Vec<TransportWatch> = Vec::new();
                 let mut latest = MediaSnapshot::default();
+                let mut browser = super::browser::Reader::new().ok();
                 let _ = callback_tx.try_send(Command::Refresh);
                 while !stop.load(Ordering::Relaxed) {
-                    let command = match rx.recv() {
+                    let received = if latest.browser() {
+                        rx.recv_timeout(std::time::Duration::from_millis(400))
+                    } else {
+                        rx.recv()
+                            .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+                    };
+                    let command = match received {
                         Ok(c) => c,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Command::StateChanged,
                         Err(_) => break,
                     };
                     if matches!(command, Command::Stop) {
                         break;
                     }
-                    let current = if matches!(command, Command::StateChanged) {
+                    if matches!(command, Command::Refresh) {
+                        sync_transport_watchers(&manager, &mut transport_watchers, &callback_tx);
+                    }
+                    let current = if matches!(command, Command::Playback(_)) {
                         watched.as_ref().map(|w| w.session.clone())
                     } else {
-                        manager.GetCurrentSession().ok()
+                        preferred_session(&manager)
                     };
                     let changed = current.as_ref().map(Interface::as_raw)
                         != watched.as_ref().map(|s| s.session.as_raw());
@@ -98,7 +110,10 @@ impl MediaWorker {
                             refresh_state(&w.session, &mut latest).map(|_| latest.clone())
                         };
                         match update {
-                            Ok(snapshot) => {
+                            Ok(mut snapshot) => {
+                                if let Some(browser) = &mut browser {
+                                    browser.refresh(&mut snapshot);
+                                }
                                 latest = snapshot;
                                 bus.send(Event::Media(latest.clone()));
                             }
@@ -113,6 +128,7 @@ impl MediaWorker {
                     }
                 }
                 drop(watched);
+                drop(transport_watchers);
                 let _ = manager.RemoveCurrentSessionChanged(current_token);
                 let _ = manager.RemoveSessionsChanged(sessions_token);
                 Ok(())
@@ -135,6 +151,76 @@ impl MediaWorker {
         let _ = self.tx.try_send(Command::Stop);
         if let Some(join) = self.join.take() {
             let _ = join.join();
+        }
+    }
+}
+fn choose_session(current: Option<usize>, playing: &[bool]) -> Option<usize> {
+    current
+        .filter(|i| playing.get(*i) == Some(&true))
+        .or_else(|| playing.iter().position(|p| *p))
+        .or(current)
+        .or_else(|| (!playing.is_empty()).then_some(0))
+}
+fn preferred_session(
+    manager: &GlobalSystemMediaTransportControlsSessionManager,
+) -> Option<GlobalSystemMediaTransportControlsSession> {
+    let current = manager.GetCurrentSession().ok();
+    let Ok(sessions) = manager.GetSessions() else {
+        return current;
+    };
+    let candidates: Vec<_> = (0..sessions.Size().unwrap_or(0).min(24))
+        .filter_map(|i| sessions.GetAt(i).ok())
+        .collect();
+    let selected = current.as_ref().and_then(|current| {
+        candidates
+            .iter()
+            .position(|candidate| candidate.as_raw() == current.as_raw())
+    });
+    let playing: Vec<_> = candidates
+        .iter()
+        .map(|s| {
+            s.GetPlaybackInfo().and_then(|i| i.PlaybackStatus()).ok()
+                == Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
+        })
+        .collect();
+    choose_session(selected, &playing)
+        .map(|i| candidates[i].clone())
+        .or(current)
+}
+struct TransportWatch {
+    session: GlobalSystemMediaTransportControlsSession,
+    token: i64,
+}
+impl Drop for TransportWatch {
+    fn drop(&mut self) {
+        let _ = self.session.RemovePlaybackInfoChanged(self.token);
+    }
+}
+fn sync_transport_watchers(
+    manager: &GlobalSystemMediaTransportControlsSessionManager,
+    watched: &mut Vec<TransportWatch>,
+    tx: &SyncSender<Command>,
+) {
+    let Ok(sessions) = manager.GetSessions() else {
+        return;
+    };
+    let candidates: Vec<_> = (0..sessions.Size().unwrap_or(0).min(24))
+        .filter_map(|i| sessions.GetAt(i).ok())
+        .collect();
+    watched.retain(|w| candidates.iter().any(|s| s.as_raw() == w.session.as_raw()));
+    for session in candidates {
+        if watched
+            .iter()
+            .any(|w| w.session.as_raw() == session.as_raw())
+        {
+            continue;
+        }
+        let tx = tx.clone();
+        if let Ok(token) = session.PlaybackInfoChanged(&TypedEventHandler::new(move |_, _| {
+            let _ = tx.try_send(Command::Refresh);
+            Ok(())
+        })) {
+            watched.push(TransportWatch { session, token });
         }
     }
 }
@@ -359,10 +445,46 @@ pub fn probe_snapshot() -> Result<MediaSnapshot> {
         GlobalSystemMediaTransportControlsSessionManager::RequestAsync(),
         stop
     )?;
-    match manager.GetCurrentSession() {
-        Ok(s) => snapshot(&s, &stop),
-        Err(_) => Ok(MediaSnapshot::default()),
+    let Some(session) = preferred_session(&manager) else {
+        return Ok(MediaSnapshot::default());
+    };
+    let mut media = snapshot(&session, &stop)?;
+    if let Ok(mut browser) = super::browser::Reader::new() {
+        browser.refresh(&mut media);
     }
+    Ok(media)
+}
+/// Read-only playback diagnostics. No lyrics, URLs, cookies or audio are saved.
+pub fn probe_timeline() -> Result<()> {
+    let _a = Apartment::new()?;
+    let stop = AtomicBool::new(false);
+    let manager = wait_operation!(
+        GlobalSystemMediaTransportControlsSessionManager::RequestAsync(),
+        stop
+    )?;
+    let Some(session) = preferred_session(&manager) else {
+        return Ok(());
+    };
+    let mut rows = Vec::new();
+    let mut browser = super::browser::Reader::new().ok();
+    for _ in 0..4 {
+        let mut s = snapshot(&session, &stop)?;
+        let native_key = crate::media::lyrics::TrackKey::from_media(&s);
+        let native_position = s.position_ms;
+        if let Some(browser) = &mut browser {
+            browser.refresh(&mut s);
+        }
+        let raw = session.GetTimelineProperties()?;
+        rows.push(serde_json::json!({"source":s.source,"native_key":native_key,"native_position_ms":native_position,"key":crate::media::lyrics::TrackKey::from_media(&s),"playing":s.playing,"raw_position_ticks":raw.Position()?.Duration,"start_ticks":raw.StartTime()?.Duration,"end_ticks":raw.EndTime()?.Duration,"max_seek_ticks":raw.MaxSeekTime()?.Duration,"last_updated_ticks":raw.LastUpdatedTime()?.UniversalTime,"utc_ticks":crate::platform::utc_ticks(),"derived_position_ms":s.position_ms,"duration_ms":s.duration_ms,"timeline_available":s.timeline_available}));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    std::fs::create_dir_all("artifacts").ok();
+    std::fs::write(
+        "artifacts/timeline-probe.json",
+        serde_json::to_vec_pretty(&rows).unwrap(),
+    )
+    .map_err(|e| Error::new(HRESULT(0x80004005u32 as i32), e.to_string()))?;
+    Ok(())
 }
 
 /// Exercise play/pause on the same session and restore its initial playback state.
@@ -403,4 +525,17 @@ pub fn probe_controls() -> Result<()> {
     )
     .map_err(|e| Error::new(HRESULT(0x80004005u32 as i32), e.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    #[test]
+    fn a_playing_browser_takes_over_from_a_paused_spotify_session() {
+        assert_eq!(choose_session(Some(0), &[false, true]), Some(1));
+        assert_eq!(choose_session(Some(1), &[true, true]), Some(1));
+        assert_eq!(choose_session(Some(1), &[false, false]), Some(1));
+        assert_eq!(choose_session(None, &[]), None);
+        assert_eq!(choose_session(None, &[false, true]), Some(1));
+    }
 }

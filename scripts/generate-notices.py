@@ -15,6 +15,7 @@ def main():
         "Project license\n\n" + (ROOT / "LICENSE").read_text(encoding="utf-8"),
         "Embedded Inter font\n\n" + (ROOT / "assets/fonts/OFL.txt").read_text(encoding="utf-8"),
         "Embedded water sound\n\n" + (ROOT / "assets/sounds/README.md").read_text(encoding="utf-8"),
+        "Embedded Icons8 graphics (separate license; not MIT)\n\n" + (ROOT / "assets/icons8/README.md").read_text(encoding="utf-8"),
     ]
     for package in sorted(metadata["packages"], key=lambda p: p["name"]):
         if package["name"] == "dynamic-island-for-windows":

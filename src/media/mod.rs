@@ -1,3 +1,4 @@
+pub mod browser;
 pub mod levels;
 pub mod lyrics;
 pub mod pulse;
@@ -45,6 +46,24 @@ impl MediaSnapshot {
     }
     pub fn spotify(&self) -> bool {
         self.source.eq_ignore_ascii_case("Spotify")
+    }
+    pub fn browser(&self) -> bool {
+        let source = self.source.to_ascii_lowercase();
+        [
+            "chrome",
+            "brave",
+            "edge",
+            "firefox",
+            "opera",
+            "vivaldi",
+            "youtube",
+            "thorium",
+            "librewolf",
+            "waterfox",
+            "zen",
+        ]
+        .iter()
+        .any(|name| source.contains(name))
     }
 }
 #[derive(Clone, Copy)]

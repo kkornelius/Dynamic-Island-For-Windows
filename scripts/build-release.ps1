@@ -3,6 +3,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $previousEncodedFlags = $env:CARGO_ENCODED_RUSTFLAGS
 Push-Location $root
 try {
+    python scripts/fetch-icons.py
+    if ($LASTEXITCODE -ne 0) { throw 'Icon preparation failed.' }
     # Encoded arguments preserve spaces in paths. These flags also retain static CRT
     # linking when overriding Cargo's target rustflags. Avoid publishing builder paths
     # in panic messages from the workspace, Cargo registry or Rust toolchain sources.

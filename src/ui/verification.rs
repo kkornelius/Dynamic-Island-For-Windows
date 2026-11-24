@@ -98,6 +98,198 @@ pub fn verify_reuse() -> windows::core::Result<()> {
         ));
     }
     verify_idle_face()?;
+    verify_collapse()?;
+    verify_dock()?;
+    Ok(())
+}
+
+fn verify_dock() -> windows::core::Result<()> {
+    let (mut s, now) = preview::fixture_state();
+    let local = LocalTime::get();
+    s.expanded = true;
+    s.tab = Tab::Settings;
+    s.settings_page = 0;
+    s.status.clear();
+    let output = std::path::Path::new("artifacts/dock-verification");
+    std::fs::create_dir_all(output).ok();
+    let mut maximum = 0u8;
+    let mut cases = 0;
+    for scale in [1.0, 1.5, 2.5] {
+        for mode in [DockMode::Floating, DockMode::Anchored] {
+            for stroke in [false, true] {
+                s.config.dock_mode = mode;
+                s.config.stroke_enabled = stroke;
+                let w = WIDTH + 2 * surface_inset(&s);
+                let h = HEIGHT + top_inset(&s) + HALO;
+                let mut reference = Canvas::new(w, h, scale)?;
+                let mut animated = Canvas::new(w, h, scale)?;
+                animated.set_dock_mix(Some(if mode == DockMode::Anchored { 1.0 } else { 0.0 }));
+                draw(&mut reference, &s, now, &local);
+                draw(&mut animated, &s, now, &local);
+                reference.finish()?;
+                animated.finish()?;
+                reference.mask(28, mode);
+                animated.mask(28, mode);
+                for y in 0..reference.height {
+                    unsafe {
+                        let a = std::slice::from_raw_parts(
+                            reference.bits.add((y * reference.stride * 4) as usize),
+                            reference.width as usize * 4,
+                        );
+                        let b = std::slice::from_raw_parts(
+                            animated.bits.add((y * animated.stride * 4) as usize),
+                            animated.width as usize * 4,
+                        );
+                        maximum = maximum.max(
+                            a.iter()
+                                .zip(b)
+                                .map(|(a, b)| a.abs_diff(*b))
+                                .max()
+                                .unwrap_or(0),
+                        );
+                    }
+                }
+                cases += 1;
+            }
+        }
+    }
+    let mut hits = true;
+    s.config.dock_mode = DockMode::Anchored;
+    s.config.stroke_enabled = true;
+    s.config.stroke_glow = 100;
+    for q in [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
+        let top = (HALO as f32 * (1.0 - q)).round() as i32;
+        let width = WIDTH + (24.0 * q).round() as i32;
+        let mut c = Canvas::new(width + 2 * HALO, HEIGHT + top + HALO, 1.0)?;
+        c.set_dock_mix(Some(q));
+        draw(&mut c, &s, now, &local);
+        c.finish()?;
+        c.mask(28, DockMode::Anchored);
+        hits &= c.hit_test(c.width / 2, top + 100) && !c.hit_test(0, 0);
+        c.save_bmp(&output.join(format!("dock-{:03}.bmp", (q * 100.0) as u32)))
+            .ok();
+    }
+    let report = serde_json::json!({"endpoint_cases":cases,"maximum_channel_difference":maximum,"intermediate_hit_regions_valid":hits});
+    std::fs::write(
+        output.join("report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .ok();
+    if maximum > 1 || !hits {
+        return Err(windows::core::Error::new(
+            windows::core::HRESULT(0x80004005u32 as i32),
+            "Animated dock geometry differs at its endpoints or hit regions",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_collapse() -> windows::core::Result<()> {
+    let (mut s, now) = preview::fixture_state();
+    let local = LocalTime::get();
+    s.status.clear();
+    let output = std::path::Path::new("artifacts/collapse-verification");
+    std::fs::create_dir_all(output).ok();
+    let mut maximum = 0u8;
+    let mut cases = 0;
+    for scale in [1.0, 1.5, 2.5] {
+        for mode in [DockMode::Floating, DockMode::Anchored] {
+            for tab in [Tab::Media, Tab::Weather, Tab::Notes, Tab::Settings] {
+                s.config.dock_mode = mode;
+                s.config.stroke_enabled = true;
+                s.config.stroke_glow = 100;
+                s.tab = tab;
+                s.show_lyrics = true;
+                let from = (expanded_width(&s) + 2 * gutter(&s), expanded_height(&s));
+                let target = (COMPACT_WIDTH + 2 * gutter(&s), COMPACT_HEIGHT);
+                let spring = crate::motion::Spring::new(
+                    now,
+                    from,
+                    target,
+                    None,
+                    crate::motion::Kind::Collapse,
+                );
+                for (elapsed, expanded, size) in [(0, true, from), (620, false, target)] {
+                    let w = size.0 + 2 * HALO;
+                    let h = size.1 + top_inset(&s) + HALO;
+                    let mut reference = Canvas::new(w, h, scale)?;
+                    let mut animated = Canvas::new(w, h, scale)?;
+                    s.expanded = expanded;
+                    draw(&mut reference, &s, now, &local);
+                    reference.finish()?;
+                    s.expanded = false;
+                    draw_collapsing(
+                        &mut animated,
+                        &s,
+                        now,
+                        &local,
+                        size,
+                        spring.collapse_visual(now + elapsed).unwrap(),
+                    );
+                    animated.finish()?;
+                    let radius = if expanded { 28 } else { 29 };
+                    reference.mask(radius, mode);
+                    animated.mask(radius, mode);
+                    for y in 0..reference.height {
+                        unsafe {
+                            let a = std::slice::from_raw_parts(
+                                reference.bits.add((y * reference.stride * 4) as usize),
+                                reference.width as usize * 4,
+                            );
+                            let b = std::slice::from_raw_parts(
+                                animated.bits.add((y * animated.stride * 4) as usize),
+                                animated.width as usize * 4,
+                            );
+                            maximum = maximum.max(
+                                a.iter()
+                                    .zip(b)
+                                    .map(|(a, b)| a.abs_diff(*b))
+                                    .max()
+                                    .unwrap_or(0),
+                            );
+                        }
+                    }
+                    cases += 1;
+                }
+                if scale == 1.0 && mode == DockMode::Floating {
+                    let name = match tab {
+                        Tab::Media => "media",
+                        Tab::Weather => "weather",
+                        Tab::Notes => "notes",
+                        _ => "settings",
+                    };
+                    for elapsed in [0, 33, 67, 100, 133, 167, 210, 267, 400, 620] {
+                        let size = spring.size(now + elapsed).0;
+                        let mut c = Canvas::new(size.0 + 2 * HALO, size.1 + 2 * HALO, scale)?;
+                        draw_collapsing(
+                            &mut c,
+                            &s,
+                            now,
+                            &local,
+                            size,
+                            spring.collapse_visual(now + elapsed).unwrap(),
+                        );
+                        c.finish()?;
+                        c.mask(29, mode);
+                        c.save_bmp(&output.join(format!("{name}-{elapsed:03}.bmp")))
+                            .ok();
+                    }
+                }
+            }
+        }
+    }
+    let report = serde_json::json!({"endpoint_cases":cases,"maximum_channel_difference":maximum,"network":false});
+    std::fs::write(
+        output.join("report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .ok();
+    if maximum > 1 {
+        return Err(windows::core::Error::new(
+            windows::core::HRESULT(0x80004005u32 as i32),
+            "Collapse endpoints differ from their steady layouts",
+        ));
+    }
     Ok(())
 }
 

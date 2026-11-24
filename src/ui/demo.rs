@@ -62,39 +62,49 @@ pub fn render_demo() -> Result<()> {
         milliseconds: 0,
         year: 2026,
         month: 11,
-        day: 18,
-        weekday: 3,
+        day: 24,
+        weekday: 2,
     };
     let scenes = [
-        ("idle", 26),
-        ("compact", 26),
-        ("media", 28),
-        ("lyrics", 36),
-        ("weather", 32),
-        ("timer", 26),
-        ("water", 28),
-        ("notes", 40),
-        ("settings", 28),
-        ("idle", 10),
+        ("idle", 32),
+        ("compact", 32),
+        ("media", 35),
+        ("lyrics", 45),
+        ("weather", 40),
+        ("timer", 32),
+        ("water", 35),
+        ("notes", 50),
+        ("settings", 35),
+        ("anchored", 20),
+        ("floating", 20),
+        ("idle", 16),
     ];
     let mut canvas = Canvas::with_capacity(
         COMPACT_WIDTH + 2 * HALO,
         COMPACT_HEIGHT + 2 * HALO,
-        MEDIA_WIDTH + 2 * HALO,
-        HEIGHT + 2 * HALO,
+        MEDIA_WIDTH + 24 + 2 * HALO,
+        HEIGHT + 24 + 2 * HALO,
         1.,
     )?;
     let mut previous = (COMPACT_WIDTH, COMPACT_HEIGHT);
+    let mut previous_mode = DockMode::Floating;
     let mut frames = Vec::new();
     let mut index = 0u64;
     for (scene, count) in scenes {
+        let scene_start = now + index * 40;
+        let mode = if scene == "anchored" {
+            DockMode::Anchored
+        } else {
+            DockMode::Floating
+        };
+        s.config.dock_mode = mode;
         s.expanded = !matches!(scene, "idle" | "compact");
         s.tab = match scene {
             "weather" => Tab::Weather,
             "timer" => Tab::Timer,
             "water" => Tab::Water,
             "notes" => Tab::Notes,
-            "settings" => Tab::Settings,
+            "settings" | "anchored" | "floating" => Tab::Settings,
             _ => Tab::Media,
         };
         s.show_lyrics = scene == "lyrics";
@@ -106,22 +116,57 @@ pub fn render_demo() -> Result<()> {
             None
         };
         if scene == "timer" {
-            s.timer.start(now + index * 50);
+            s.timer.set_seconds(150);
         } else {
             s.timer.reset();
         }
-        let target = if s.expanded {
+        let mut target = if s.expanded {
             (expanded_width(&s), expanded_height(&s))
         } else {
             (COMPACT_WIDTH, COMPACT_HEIGHT)
         };
+        target.0 += 2 * gutter(&s);
+        let dock = (previous_mode != mode).then(|| {
+            let pose = |size: (i32, i32), mode| crate::motion::DockPose {
+                anchor: [0., if mode == DockMode::Floating { 28. } else { 0. }],
+                size: [size.0 as f32, size.1 as f32],
+                attached: if mode == DockMode::Anchored { 1. } else { 0. },
+            };
+            crate::motion::Dock::new(
+                scene_start,
+                pose(previous, previous_mode),
+                pose(target, mode),
+                None,
+            )
+        });
+        let spring = (dock.is_none() && previous != target).then(|| {
+            crate::motion::Spring::new(
+                scene_start,
+                previous,
+                target,
+                None,
+                if !s.expanded {
+                    crate::motion::Kind::Collapse
+                } else {
+                    crate::motion::Kind::Resize
+                },
+            )
+        });
         for n in 0..count {
-            let time = now + index * 50;
-            let t = (n as f32 * 0.05 / 0.12).min(1.);
-            let ease = 1. - (1. - t).powi(3);
-            let width = previous.0 + ((target.0 - previous.0) as f32 * ease) as i32;
-            let height = previous.1 + ((target.1 - previous.1) as f32 * ease) as i32;
-            if !canvas.resize(width + 2 * HALO, height + 2 * HALO) {
+            let time = now + index * 40;
+            let size = dock
+                .map(|d| {
+                    let p = d.pose(time);
+                    (p.size[0].round() as i32, p.size[1].round() as i32)
+                })
+                .or_else(|| spring.map(|s| s.size(time).0))
+                .unwrap_or(target);
+            let attached = dock.map(|d| d.pose(time).attached);
+            let top = attached
+                .map(|q| (HALO as f32 * (1.0 - q)).round() as i32)
+                .unwrap_or_else(|| top_inset(&s));
+            canvas.set_dock_mix(attached);
+            if !canvas.resize(size.0 + 2 * HALO, size.1 + top + HALO) {
                 return Err(Error::new(
                     E_INVALIDARG,
                     "Demo surface exceeded fixed capacity",
@@ -135,6 +180,20 @@ pub fn render_demo() -> Result<()> {
                 [(phase * 0.25).sin() * 0.7, (phase * 0.2).cos() * 0.45],
                 scene == "idle" && n > 14 && count > 10,
             );
+            if scene == "timer" {
+                s.editing = if n < 6 {
+                    Some(EditField::Timer(crate::timer::Part::Minutes))
+                } else if n < 13 {
+                    Some(EditField::Timer(crate::timer::Part::Seconds))
+                } else {
+                    None
+                };
+                s.edit_text = if n < 6 { "2" } else { "30" }.into();
+                s.edit_select_all = false;
+                if n == 16 {
+                    s.timer.start(time);
+                }
+            }
             if scene == "notes" {
                 let note = "Ideas for tomorrow\n\nShip one small thing.\nTake a short walk.\nLeave room for a break.";
                 let text: String = note.chars().take((n * 4) as usize).collect();
@@ -147,13 +206,19 @@ pub fn render_demo() -> Result<()> {
                     s.note.saved = s.note.editor.revision;
                 }
             }
-            draw(&mut canvas, &s, time, &local);
+            if let Some(visual) = spring.and_then(|spring| spring.collapse_visual(time)) {
+                draw_collapsing(&mut canvas, &s, time, &local, size, visual);
+            } else {
+                draw(&mut canvas, &s, time, &local);
+            }
             canvas.finish()?;
-            canvas.mask(if s.expanded { 28 } else { 29 }, DockMode::Floating);
+            canvas.mask(if s.expanded { 28 } else { 29 }, mode);
             let filename = format!("{index:04}.bmp");
             canvas.save_bmp(&output.join(&filename)).map_err(io_error)?;
             frames.push(serde_json::json!({"file":filename,"scene":scene,"width":canvas.width,"height":canvas.height}));
-            if n == count - 1 {
+            if n == if scene == "timer" { 14 } else { count - 1 }
+                && !matches!(scene, "anchored" | "floating")
+            {
                 canvas
                     .save_bmp(&output.join("screenshots").join(format!("{scene}.bmp")))
                     .map_err(io_error)?;
@@ -161,8 +226,9 @@ pub fn render_demo() -> Result<()> {
             index += 1;
         }
         previous = target;
+        previous_mode = mode;
     }
-    let manifest = serde_json::json!({"fps":20,"frames":frames,"provenance":"Actual Direct2D app renderer; fictional offline media, lyrics, weather and notes; not a desktop recording."});
+    let manifest = serde_json::json!({"fps":25,"frames":frames,"provenance":"Actual Direct2D app renderer and runtime spring/dock motion; fictional offline media, lyrics, weather and notes; not a desktop recording."});
     std::fs::write(
         output.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest).unwrap(),

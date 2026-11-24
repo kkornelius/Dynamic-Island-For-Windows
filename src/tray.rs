@@ -48,16 +48,6 @@ impl Tray {
             let _ = Shell_NotifyIconW(NIM_SETVERSION, &self.data);
         }
     }
-    pub fn balloon(&self, title: &str, detail: &str) {
-        unsafe {
-            let mut data = self.data;
-            data.uFlags = NIF_INFO;
-            data.dwInfoFlags = NIIF_INFO;
-            copy_utf16(&mut data.szInfoTitle, title);
-            copy_utf16(&mut data.szInfo, detail);
-            let _ = Shell_NotifyIconW(NIM_MODIFY, &data);
-        }
-    }
     pub fn remove(&mut self) {
         if self.registered {
             unsafe {
@@ -84,6 +74,17 @@ impl Tray {
                 },
             );
             let _ = AppendMenuW(menu, MF_STRING, 4, w!("Reset position"));
+            if let Ok(about) = CreatePopupMenu() {
+                let version: Vec<u16> =
+                    format!("Dynamic Island For Windows {}\0", env!("CARGO_PKG_VERSION"))
+                        .encode_utf16()
+                        .collect();
+                let _ = AppendMenuW(about, MF_STRING | MF_DISABLED, 0, PCWSTR(version.as_ptr()));
+                let _ = AppendMenuW(about, MF_SEPARATOR, 0, None);
+                let _ = AppendMenuW(about, MF_STRING, 6, w!("Weather: Open-Meteo / GeoNames"));
+                let _ = AppendMenuW(about, MF_STRING, 7, w!("Icons: Icons8"));
+                let _ = AppendMenuW(menu, MF_POPUP, about.0 as usize, w!("About / credits"));
+            }
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
             let _ = AppendMenuW(menu, MF_STRING, 9, w!("Quit Dynamic Island For Windows"));
             let mut point = POINT::default();

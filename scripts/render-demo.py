@@ -17,7 +17,8 @@ CAPTIONS = {"idle": "Cursor-following eyes", "compact": "Compact now playing",
             "media": "Media controls", "lyrics": "Timed lyrics",
             "weather": "Weather for your selected city", "timer": "A little time to focus",
             "water": "Water check-ins", "notes": "Quick notes, saved locally",
-            "settings": "Make it your own"}
+            "settings": "Make it your own", "anchored": "Smoothly attach to the top edge",
+            "floating": "Return to your floating position"}
 
 
 def native_image(path):
@@ -72,7 +73,7 @@ def main():
     with Image.open(OUTPUT / "demo.gif") as gif:
         if gif.n_frames != len(encoded):
             raise RuntimeError("GIF frame count changed unexpectedly")
-        for index in [0, 40, 70, 110, 145, 180, 220, 255, len(encoded) - 1]:
+        for index in range(len(encoded)):
             gif.seek(index)
             if ImageChops.difference(gif.convert("RGB"), encoded[index].convert("RGB")).getbbox():
                 raise RuntimeError(f"GIF disposal/composition differs from native frame {index}")

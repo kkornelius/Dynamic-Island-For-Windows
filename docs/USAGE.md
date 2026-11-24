@@ -10,19 +10,19 @@ The bars display combined system-output amplitude history. Sensitivity changes t
 
 ## Notes
 
-The paper-note icon opens the editor. Enter inserts a line, Tab four spaces. Ctrl+A/C/X/V, Ctrl+Z/Y and Ctrl+Shift+Z work while editing. Arrows, Shift+arrows, Home/End, Page Up/Down and Ctrl+Home/End navigate/select. Ctrl+S queues a save; Ctrl+Enter/Escape ends editing without discarding text. **Copy** copies the whole note.
+The paper-note icon opens the editor. Enter inserts a line, Tab four spaces. Ctrl+A/C/X/V, Ctrl+Z/Y and Ctrl+Shift+Z work while editing. Ctrl+Backspace deletes the previous word and Ctrl+Delete the next word. Arrows, Shift+arrows, Home/End, Page Up/Down and Ctrl+Home/End navigate/select. Ctrl+S queues a save; Ctrl+Enter/Escape ends editing without discarding text. **Copy** copies the whole note.
 
 The limit is 20,000 Unicode characters with 32 undo steps. Autosave starts 600 ms after typing pauses. Switching panels, minimizing or exiting queues the newest text; shutdown drains the writer. Saved status follows acknowledgement. A failed save retains the text and retries.
 
 ## Timer and water
 
-Timer presets can be changed before starting; pause/resume/reset are available. Deadlines include Windows sleep while the process survives. Exiting stops the timer. Its sound follows Windows volume and the Timer sound setting.
+Timer presets and +/− controls can be changed before starting; click the minute or second value to type directly. Enter or clicking away saves, Tab switches fields, and Escape cancels. Seconds above 59 carry into minutes; duration is limited to 1 second–24 hours. Pause/resume/reset are available. Deadlines include Windows sleep while the process survives. Exiting stops the timer. Its sound follows Windows volume and the Timer sound setting.
 
 Water reminders start disabled. Configure intervals, active/quiet hours and snooze. Equal start/end hours mean all day. **I had some water** records a check-in, reschedules and plays three short gulps. Repeated presses restart the clip. Check-ins do not measure intake.
 
 ## Weather
 
-Use **Change city**, type a name and choose a result. Forecasts refresh periodically and support manual refresh with a cooldown. Cached results work offline. Hover the info icon for provider credits; click it for source/license information.
+Use **Change city**, type a name and choose a result. Forecasts refresh periodically and support manual refresh with a cooldown. Cached results work offline. Provider credits are available in the tray menu under About / credits.
 
 ## Startup and updates
 

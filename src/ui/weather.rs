@@ -152,37 +152,7 @@ pub(super) fn draw(v: &mut View<'_>, now: u64) {
             format!("Updated {} · Wind {:.0} km/h", f.clock(f.time), f.wind)
         };
         if !subtitle.is_empty() {
-            v.label(&subtitle, 28, 317, 272, 20, 10, false, MUTED);
-        }
-        v.icon_button(
-            Icon::Info,
-            [306, 314, 24, 29],
-            Action::WeatherAttribution,
-            false,
-            true,
-        );
-        if v.s.hover == Some(Action::WeatherAttribution) {
-            v.c.round(132, 265, 296, 43, 10, 0x303030);
-            v.label(
-                "Data: Open-Meteo · Places: GeoNames",
-                144,
-                268,
-                272,
-                19,
-                10,
-                false,
-                WHITE,
-            );
-            v.label(
-                "CC BY 4.0 · Click for sources",
-                144,
-                286,
-                272,
-                18,
-                10,
-                false,
-                MUTED,
-            );
+            v.label(&subtitle, 28, 317, 296, 20, 10, false, MUTED);
         }
         v.button(
             if w.refreshing {

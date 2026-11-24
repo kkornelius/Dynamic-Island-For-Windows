@@ -6,9 +6,11 @@ mod browser_space;
 mod color;
 mod event;
 mod face;
+mod frame_clock;
 mod fullscreen;
 mod interaction;
 mod media;
+mod motion;
 mod network;
 mod notes;
 mod platform;
@@ -24,11 +26,17 @@ mod weather;
 mod window;
 
 fn main() -> windows::core::Result<()> {
+    // Keep the apartment alive until cached WIC/D2D/DirectWrite resources are
+    // released. Tearing COM down between individual icons invalidates caches.
+    let _apartment = platform::Apartment::new()?;
     let result = run();
     ui::release_graphics();
     result
 }
 fn run() -> windows::core::Result<()> {
+    if std::env::args().any(|a| a == "--probe-timeline") {
+        return media::sessions::probe_timeline();
+    }
     if std::env::args().any(|a| a == "--licenses") {
         print!("{}", include_str!("../assets/licenses/NOTICES.txt"));
         return Ok(());
@@ -62,6 +70,9 @@ fn run() -> windows::core::Result<()> {
     }
     if std::env::args().any(|a| a == "--probe-public-lyrics") {
         return media::lyrics::probe_public_example();
+    }
+    if std::env::args().any(|a| a == "--probe-browser-lyrics") {
+        return media::lyrics::probe_browser_example();
     }
     if std::env::args().any(|a| a == "--render-design") {
         return ui::render_design();

@@ -25,7 +25,17 @@ impl Drop for Apartment {
 }
 
 pub fn now_ms() -> u64 {
-    unsafe { windows::Win32::System::SystemInformation::GetTickCount64() }
+    // Keep the existing uptime epoch, but advance with QPC-backed Instant.
+    // GetTickCount64's coarse updates can repeat a timestamp and then jump
+    // ~31ms even while frames arrive steadily at 60Hz.
+    static CLOCK: std::sync::OnceLock<(u64, std::time::Instant)> = std::sync::OnceLock::new();
+    let (base, started) = CLOCK.get_or_init(|| {
+        (
+            unsafe { windows::Win32::System::SystemInformation::GetTickCount64() },
+            std::time::Instant::now(),
+        )
+    });
+    base.saturating_add(started.elapsed().as_millis().min(u64::MAX as u128) as u64)
 }
 pub fn utc_ticks() -> u64 {
     let t = unsafe { windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime() };

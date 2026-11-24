@@ -22,10 +22,13 @@ pub struct TrackKey {
     pub artist: String,
     pub album: String,
     pub seconds: u64,
+    #[serde(default)]
+    pub web: bool,
 }
 impl TrackKey {
     pub fn from_media(m: &MediaSnapshot) -> Option<Self> {
-        if !m.available || m.title.trim().is_empty() || m.artist.trim().is_empty() {
+        if !m.available || m.title.trim().is_empty() || (m.artist.trim().is_empty() && !m.browser())
+        {
             return None;
         }
         Some(Self {
@@ -33,8 +36,121 @@ impl TrackKey {
             artist: m.artist.chars().take(256).collect(),
             album: m.album.chars().take(256).collect(),
             seconds: m.duration_ms / 1000,
+            web: m.browser(),
         })
     }
+}
+/// Remove upload labels, not recording identity (live/remix/acoustic remain intact).
+fn upload_title(value: &str) -> String {
+    let mut clean = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find(['(', '[']) {
+        clean.push_str(&rest[..start]);
+        let close = if rest.as_bytes()[start] == b'(' {
+            ')'
+        } else {
+            ']'
+        };
+        let Some(end) = rest[start..].find(close).map(|i| start + i) else {
+            clean.push_str(&rest[start..]);
+            rest = "";
+            break;
+        };
+        let label = normalize(&rest[start + 1..end]);
+        if ![
+            "officialvideo",
+            "officialmusicvideo",
+            "officialaudio",
+            "officiallyricvideo",
+            "officiallyrics",
+            "lyrics",
+            "lyricvideo",
+            "audio",
+            "musicvideo",
+            "visualizer",
+            "officialvisualizer",
+            "officiallyricchordvideo",
+            "officiallyricandchordvideo",
+            "officiallyricvideo",
+            "videolirik",
+            "lirik",
+            "hd",
+            "4k",
+            "1080p",
+        ]
+        .contains(&label.as_str())
+        {
+            clean.push_str(&rest[start..=end]);
+        }
+        rest = &rest[end + 1..];
+    }
+    clean.push_str(rest);
+    for suffix in [
+        " - YouTube",
+        " | YouTube",
+        " - Official Video",
+        " | Official Video",
+        " - Lyrics",
+        " | Lyrics",
+    ] {
+        if clean
+            .to_ascii_lowercase()
+            .ends_with(&suffix.to_ascii_lowercase())
+        {
+            clean.truncate(clean.len() - suffix.len());
+        }
+    }
+    clean.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+fn channel_artist(value: &str) -> String {
+    let value = value.trim();
+    for suffix in [" - Topic", " – Topic", "VEVO", " Official"] {
+        if value
+            .to_ascii_lowercase()
+            .ends_with(&suffix.to_ascii_lowercase())
+        {
+            return value[..value.len() - suffix.len()].trim().to_owned();
+        }
+    }
+    value.to_owned()
+}
+fn lookup_keys(key: &TrackKey) -> Vec<TrackKey> {
+    if !key.web {
+        return vec![key.clone()];
+    }
+    let title = upload_title(&key.title);
+    let artist = channel_artist(&key.artist);
+    let mut candidates = Vec::new();
+    for separator in [" - ", " – ", " — "] {
+        if let Some((left, right)) = title.split_once(separator) {
+            let (artist, title) = if normalize(right) == normalize(&artist) && !artist.is_empty() {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            if !artist.trim().is_empty() && !title.trim().is_empty() {
+                candidates.push(TrackKey {
+                    title: title.trim().into(),
+                    artist: artist.trim().into(),
+                    album: String::new(),
+                    seconds: key.seconds,
+                    web: true,
+                });
+            }
+            break;
+        }
+    }
+    if !artist.is_empty() {
+        candidates.push(TrackKey {
+            title,
+            artist,
+            album: String::new(),
+            seconds: key.seconds,
+            web: true,
+        });
+    }
+    candidates.dedup();
+    candidates
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LyricLine {
@@ -259,9 +375,15 @@ fn normalize(s: &str) -> String {
 }
 impl Record {
     fn match_score(&self, key: &TrackKey) -> Option<i32> {
+        let tolerance = if key.web {
+            (key.seconds as f64 * 0.06).clamp(8.0, 20.0)
+        } else {
+            3.0
+        };
         if !self.duration.is_finite()
-            || key.seconds == 0
-            || (self.duration - key.seconds as f64).abs() > 3.0
+            || self.duration <= 0.0
+            || (key.seconds == 0 && !key.web)
+            || (key.seconds != 0 && (self.duration - key.seconds as f64).abs() > tolerance)
         {
             return None;
         }
@@ -291,6 +413,9 @@ impl Record {
     }
     fn timed_match_score(&self, key: &TrackKey) -> Option<i32> {
         let score = self.match_score(key)?;
+        if key.web && (key.seconds == 0 || (self.duration - key.seconds as f64).abs() > 3.0) {
+            return None;
+        }
         let lines = self
             .synced_lyrics
             .as_deref()
@@ -307,6 +432,17 @@ impl Record {
     }
     fn matches(&self, key: &TrackKey) -> bool {
         self.match_score(key).is_some()
+    }
+    fn document_for(self, key: &TrackKey) -> Document {
+        let timed = self.timed_match_score(key).is_some();
+        let mut doc = self.document();
+        if key.web && !timed {
+            if doc.plain.is_empty() {
+                doc.plain = doc.lines.iter().map(|line| line.text.clone()).collect();
+            }
+            doc.lines.clear();
+        }
+        doc
     }
     fn document(self) -> Document {
         Document {
@@ -497,8 +633,8 @@ impl Cache {
                 let age = seconds_now().saturating_sub(e.saved);
                 match &e.document {
                     Some(d) if !d.lines.is_empty() || d.instrumental => age < 7 * 86400,
-                    Some(_) => e.resolver_version >= 3 && age < 6 * 3600,
-                    None => e.resolver_version >= 3 && age < 3600,
+                    Some(_) => e.resolver_version >= 4 && age < 6 * 3600,
+                    None => e.resolver_version >= 4 && age < 3600,
                 }
             })
     }
@@ -545,7 +681,7 @@ impl Cache {
             key,
             document,
             saved: seconds_now(),
-            resolver_version: 3,
+            resolver_version: 4,
         });
         if self.entries.len() > 40 {
             self.entries.remove(0);
@@ -686,13 +822,28 @@ fn resolve(
     last: &mut std::time::Instant,
     blocked: &mut u64,
 ) -> Status {
+    let mut result = Status::Unavailable;
+    for candidate in lookup_keys(key) {
+        result = resolve_key(&candidate, stop, last, blocked);
+        if !matches!(result, Status::Unavailable) {
+            break;
+        }
+    }
+    result
+}
+fn resolve_key(
+    key: &TrackKey,
+    stop: &AtomicBool,
+    last: &mut std::time::Instant,
+    blocked: &mut u64,
+) -> Status {
     let mut fallback = None;
     match request(&signature_path(key), stop, last, blocked) {
         Ok(r) if r.status == 200 => {
             if let Ok(record) = serde_json::from_slice::<Record>(&r.body)
                 && record.matches(key)
             {
-                let d = record.document();
+                let d = record.document_for(key);
                 if d.instrumental || !d.lines.is_empty() {
                     return Status::Ready(d);
                 }
@@ -718,7 +869,7 @@ fn resolve(
                     .filter_map(|r| r.timed_match_score(key).map(|score| (score, r)))
                     .max_by_key(|(score, _)| *score);
                 if let Some((_, r)) = selected {
-                    return Status::Ready(r.clone().document());
+                    return Status::Ready(r.clone().document_for(key));
                 }
                 if fallback.is_none() {
                     fallback = records
@@ -733,7 +884,7 @@ fn resolve(
                                 .map(|score| (score, r))
                         })
                         .max_by_key(|(score, _)| *score)
-                        .map(|(_, r)| r.document());
+                        .map(|(_, r)| r.document_for(key));
                 }
             }
         }
@@ -747,6 +898,7 @@ fn resolve(
 /// Resolves only the track explicitly shown in the reported screenshot. No playback read.
 pub fn probe_reported_track() -> Result<()> {
     let key = TrackKey {
+        web: false,
         title: "Wichita Lineman (feat. Nick Cave)".into(),
         artist: "Flea".into(),
         album: "Honora".into(),
@@ -801,6 +953,7 @@ pub fn probe() -> Result<()> {
 /// Resolve the user's reported collaboration-credit variant without reading playback.
 pub fn probe_go_easy_track() -> Result<()> {
     let key = TrackKey {
+        web: false,
         title: "Go Easy, Kid (with James Blake)".into(),
         artist: "Monica Martin".into(),
         album: "Go Easy, Kid (with James Blake)".into(),
@@ -833,6 +986,7 @@ pub fn probe_go_easy_track() -> Result<()> {
 /// It does not inspect Windows media sessions or read the user's song metadata.
 pub fn probe_public_example() -> Result<()> {
     let key = TrackKey {
+        web: false,
         title: "I Want to Live".into(),
         artist: "Borislav Slavov".into(),
         album: "Baldur's Gate 3 (Original Game Soundtrack)".into(),
@@ -851,9 +1005,101 @@ pub fn probe_public_example() -> Result<()> {
     .map_err(|e| Error::new(HRESULT(0x80004005u32 as i32), e.to_string()))?;
     Ok(())
 }
+/// Public LRCLIB example passed through synthetic browser-style metadata.
+/// Does not open a video, read user playback, or print copyrighted lyric text.
+pub fn probe_browser_example() -> Result<()> {
+    let media = MediaSnapshot {
+        available: true,
+        title: "Borislav Slavov - I Want to Live (Official Audio)".into(),
+        artist: "Music upload channel".into(),
+        source: "Brave".into(),
+        duration_ms: 233_000,
+        ..Default::default()
+    };
+    let key = TrackKey::from_media(&media).unwrap();
+    let normalized = lookup_keys(&key);
+    let status = resolve(
+        &key,
+        &AtomicBool::new(false),
+        &mut (std::time::Instant::now() - Duration::from_secs(1)),
+        &mut 0,
+    );
+    let (state, timed, plain) = match &status {
+        Status::Ready(d) => ("ready", d.lines.len(), d.plain.len()),
+        Status::NetworkError => ("network_error", 0, 0),
+        Status::RateLimited => ("rate_limited", 0, 0),
+        _ => ("unavailable", 0, 0),
+    };
+    std::fs::create_dir_all("artifacts").ok();
+    std::fs::write("artifacts/browser-lyrics-verification.json",serde_json::to_vec_pretty(&serde_json::json!({"source":"synthetic Brave metadata; public LRCLIB documentation track","user_playback_read":false,"normalized":normalized,"status":state,"timed_lines":timed,"plain_lines":plain})).unwrap()).map_err(|e|Error::new(HRESULT(0x80004005u32 as i32),e.to_string()))?;
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn youtube_upload_labels_and_channel_names_resolve_to_music_metadata() {
+        let media = MediaSnapshot {
+            available: true,
+            title: "Singer - Song (Official Music Video)".into(),
+            artist: "SingerVEVO".into(),
+            source: "Brave".into(),
+            duration_ms: 203_000,
+            ..Default::default()
+        };
+        let key = TrackKey::from_media(&media).unwrap();
+        let candidates = lookup_keys(&key);
+        assert_eq!(candidates[0].title, "Song");
+        assert_eq!(candidates[0].artist, "Singer");
+        assert!(candidates[0].web);
+        assert!(candidates[0].album.is_empty());
+        let mut media = media;
+        media.title = "Song (Live at the Hall) [Official Audio]".into();
+        media.artist = "Singer - Topic".into();
+        let candidates = lookup_keys(&TrackKey::from_media(&media).unwrap());
+        assert_eq!(candidates[0].title, "Song (Live at the Hall)");
+        assert_eq!(candidates[0].artist, "Singer");
+        assert!(candidates[0].web);
+        media.source = "Spotify".into();
+        assert_eq!(
+            lookup_keys(&TrackKey::from_media(&media).unwrap())[0].title,
+            media.title
+        );
+    }
+    #[test]
+    fn browser_video_edits_get_plain_lyrics_when_timing_differs() {
+        let key = TrackKey {
+            title: "Song".into(),
+            artist: "Singer".into(),
+            album: String::new(),
+            seconds: 210,
+            web: true,
+        };
+        let exact = record(
+            "Song",
+            "Singer",
+            "",
+            210.0,
+            Some("[00:01.00]Original line\n[00:03.00]Another line"),
+        );
+        assert!(!exact.clone().document_for(&key).lines.is_empty());
+        let edited = record(
+            "Song",
+            "Singer",
+            "",
+            200.0,
+            Some("[00:01.00]Original line\n[00:03.00]Another line"),
+        );
+        assert!(edited.matches(&key));
+        let doc = edited.document_for(&key);
+        assert!(doc.lines.is_empty());
+        assert!(!doc.plain.is_empty());
+        let mut spotify = key.clone();
+        spotify.web = false;
+        assert!(!record("Song", "Singer", "", 200.0, None).matches(&spotify));
+        assert!(!record("Song (Remix)", "Singer", "", 210.0, None).matches(&key));
+        assert!(!record("Song", "Different artist", "", 210.0, None).matches(&key));
+    }
     fn record(
         title: &str,
         artist: &str,
@@ -865,6 +1111,7 @@ mod tests {
     }
     fn featured_key() -> TrackKey {
         TrackKey {
+            web: false,
             title: "Original song (feat. Friend)".into(),
             artist: "Composer".into(),
             album: "Example album".into(),
@@ -905,6 +1152,7 @@ mod tests {
     #[test]
     fn collaboration_credit_in_title_and_single_album_finds_the_matching_duration() {
         let key = TrackKey {
+            web: false,
             title: "Go Easy, Kid (with James Blake)".into(),
             artist: "Monica Martin".into(),
             album: "Go Easy, Kid (with James Blake)".into(),

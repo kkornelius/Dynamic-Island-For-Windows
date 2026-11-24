@@ -21,7 +21,9 @@ These are historical observations, not a fresh benchmark of every public-beta fe
 
 ## Current verification approach
 
-The v0.7.2-beta.1 release candidate passed 58 unit tests plus 396 partial-render, 96 surface-reuse and 180 recolor comparisons on the development machine. Maximum per-channel difference from fresh rendering was 1/255. Eye-return cleanup and idle audio exclusion matched exactly. These are correctness checks, not FPS measurements or live service/device tests.
+The v0.7.3 candidate passed 72 unit tests, 82 native interaction checks and 732 render comparisons: 396 partial-render, 96 surface-reuse, 180 recolor, 48 collapse endpoint and 12 dock endpoint cases. Maximum per-channel difference from fresh rendering was 1/255; dock endpoints matched exactly. These are correctness checks, not live service/device coverage.
+
+An offline native fixture measured eight floating/anchored switches at 100% DPI, 3 px stroke and 100% glow. Across 184 animated frames, mean rendering including native upload was 9.16 ms and P95 was 10.20 ms; none exceeded 16.7 ms. This measures app render work on the development machine, not end-to-end display latency or guaranteed FPS on other hardware/scales. The shared frame clock coalesces animation work; redraw scheduling preserves an already-due countdown tick when media/status updates arrive.
 
 - Unit checks for deadlines, persistence, Unicode editing, lyrics matching and startup parsing.
 - Native click/hover/pin, save/reopen, layout, visibility and worker tests.

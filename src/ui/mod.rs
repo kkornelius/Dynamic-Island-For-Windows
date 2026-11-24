@@ -3,6 +3,7 @@ pub mod canvas;
 mod demo;
 mod face;
 mod graphics;
+mod icon_assets;
 mod icons;
 mod notes;
 mod preview;
@@ -212,9 +213,9 @@ impl View<'_> {
         icons::draw(
             self.c,
             icon,
-            x + (w - 22) / 2,
-            y + (h - 22) / 2,
-            22,
+            x + (w - 24) / 2,
+            y + (h - 24) / 2,
+            24,
             if !enabled {
                 DIM
             } else if selected {
@@ -268,16 +269,73 @@ pub fn draw(c: &mut Canvas, s: &State, now: u64, local: &LocalTime) -> Vec<Hit> 
     } else {
         COMPACT_HEIGHT
     };
-    if s.media.available
+    backdrop(c, s, w, h, s.expanded);
+    contents(c, s, now, local, s.expanded)
+}
+fn spotify_backdrop(s: &State, expanded: bool) -> bool {
+    s.media.available
         && !s.idle()
         && s.media.spotify()
-        && (!s.expanded || s.tab == Tab::Media)
+        && (!expanded || s.tab == Tab::Media)
         && s.notices.is_empty()
-    {
+}
+fn backdrop(c: &Canvas, s: &State, w: i32, h: i32, expanded: bool) {
+    if spotify_backdrop(s, expanded) {
         c.spotify_gradient(-gutter(s), 0, w + 2 * gutter(s), h);
     } else {
         c.round(-gutter(s), 0, w + 2 * gutter(s), h, 0, BG);
     }
+}
+pub fn draw_collapsing(
+    c: &mut Canvas,
+    s: &State,
+    now: u64,
+    local: &LocalTime,
+    size: (i32, i32),
+    visual: crate::motion::CollapseVisual,
+) -> Vec<Hit> {
+    c.begin(surface_inset(s), top_inset(s));
+    c.set_border(
+        s.config.stroke_enabled,
+        s.config.stroke_color,
+        s.config.stroke_width,
+        s.config.stroke_glow,
+    );
+    let w = size.0 - 2 * gutter(s);
+    let bounds = [-gutter(s), 0, size.0, size.1];
+    // The backdrop follows the live body dimensions throughout contraction.
+    // Content fades independently, so it never snaps to a small layout inside
+    // a still-large panel. Keep both layouts centered on the capsule anchor.
+    backdrop(c, s, w, size.1, true);
+    if spotify_backdrop(s, true) != spotify_backdrop(s, false) {
+        c.content_layer(bounds, 0.0, visual.capsule_alpha, |c| {
+            backdrop(c, s, w, size.1, false);
+        });
+    }
+    c.content_layer(
+        bounds,
+        (w - expanded_width(s)) as f32 / 2.0,
+        visual.panel_alpha,
+        |c| {
+            contents(c, s, now, local, true);
+        },
+    );
+    c.content_layer(
+        bounds,
+        (w - COMPACT_WIDTH) as f32 / 2.0,
+        visual.capsule_alpha,
+        |c| {
+            contents(c, s, now, local, false);
+        },
+    );
+    vec![Hit {
+        rect: bounds,
+        action: Action::Expand,
+    }]
+}
+fn contents(c: &mut Canvas, s: &State, now: u64, local: &LocalTime, expanded: bool) -> Vec<Hit> {
+    let w = expanded_width(s);
+    let h = expanded_height(s);
     let mut v = View {
         c,
         s,
@@ -310,7 +368,7 @@ pub fn draw(c: &mut Canvas, s: &State, now: u64, local: &LocalTime) -> Vec<Hit> 
         });
         return v.hits;
     }
-    if !s.expanded {
+    if !expanded {
         if s.media.available && !s.idle() {
             if s.media.spotify() {
                 v.c.spotify(18, 18, 22);

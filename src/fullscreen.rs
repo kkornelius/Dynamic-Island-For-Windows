@@ -42,27 +42,30 @@ fn geometry(window: HWND, monitor: RECT) -> Option<bool> {
         ))
     }
 }
-pub fn active(own: HWND, anchor: (i32, i32)) -> Option<bool> {
+fn usable(window: HWND) -> bool {
+    unsafe {
+        if !IsWindow(Some(window)).as_bool()
+            || !IsWindowVisible(window).as_bool()
+            || IsIconic(window).as_bool()
+        {
+            return false;
+        }
+        let mut cloaked = 0u32;
+        let _ = windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+            window,
+            windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,
+            (&mut cloaked as *mut u32).cast(),
+            4,
+        );
+        cloaked == 0
+    }
+}
+/// A missing foreground during a game teardown may only retain a blocker that
+/// still exists, is visible, and still covers this monitor. Never latch a stale
+/// fullscreen bool when the game window has already gone away.
+pub fn active(own: HWND, anchor: (i32, i32), previous: Option<isize>) -> (bool, Option<isize>) {
     unsafe {
         let foreground = GetForegroundWindow();
-        if foreground.0.is_null() {
-            return None;
-        }
-        if foreground == own
-            || !IsWindowVisible(foreground).as_bool()
-            || IsIconic(foreground).as_bool()
-        {
-            return Some(false);
-        }
-        let mut name = [0u16; 128];
-        let length = GetClassNameW(foreground, &mut name);
-        let class = String::from_utf16_lossy(&name[..length.max(0) as usize]);
-        if matches!(
-            class.as_str(),
-            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
-        ) {
-            return Some(false);
-        }
         let monitor = MonitorFromPoint(
             POINT {
                 x: anchor.0,
@@ -75,9 +78,27 @@ pub fn active(own: HWND, anchor: (i32, i32)) -> Option<bool> {
             ..Default::default()
         };
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return None;
+            return (false, None);
         }
-        geometry(foreground, info.rcMonitor)
+        let candidate = if foreground.0.is_null() {
+            previous.map(|h| HWND(h as _)).filter(|w| usable(*w))
+        } else {
+            Some(foreground).filter(|w| *w != own && usable(*w))
+        };
+        let Some(foreground) = candidate else {
+            return (false, None);
+        };
+        let mut name = [0u16; 128];
+        let length = GetClassNameW(foreground, &mut name);
+        let class = String::from_utf16_lossy(&name[..length.max(0) as usize]);
+        if matches!(
+            class.as_str(),
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        ) {
+            return (false, None);
+        }
+        let hidden = geometry(foreground, info.rcMonitor) == Some(true);
+        (hidden, hidden.then_some(foreground.0 as isize))
     }
 }
 /// Hidden native fixtures exercise actual client-to-screen coordinates without taking focus.
@@ -148,6 +169,10 @@ pub fn verify_geometry(
             geometry(window, r) == Some(false),
         );
         let _ = DestroyWindow(window);
+        checks.insert(
+            "destroyed_fullscreen_blocker_is_not_retained",
+            !usable(window),
+        );
         Ok(checks)
     }
 }

@@ -230,7 +230,8 @@ pub fn manage_in_windows() {
 /// A manually opened upgrade may refresh the stable copy after obtaining the
 /// single-instance mutex. Logon launches never rewrite their own Run entry.
 pub fn refresh_copy() {
-    if std::env::args().any(|a| a == "--autostart")
+    if env!("CARGO_PKG_VERSION").contains("preview")
+        || std::env::args().any(|a| a == "--autostart" || a == "--no-startup-refresh")
         || crate::platform::argument("--data-dir").is_some()
     {
         return;

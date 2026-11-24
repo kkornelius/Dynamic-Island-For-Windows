@@ -2,14 +2,14 @@
 
 # Dynamic Island For Windows
 
-A native Windows desktop companion for music, weather, timers and quick notes.
+A native Rust desktop companion for music, lyrics, weather, timers and quick notes — always a hover away.
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-0078D4)
 ![Rust](https://img.shields.io/badge/Built%20with-Rust-DEA584)
 ![License](https://img.shields.io/badge/License-MIT-47A248)
 [![Windows build](https://github.com/kkornelius/Dynamic-Island-For-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/kkornelius/Dynamic-Island-For-Windows/actions/workflows/ci.yml)
 
-**[Download portable EXE](https://github.com/kkornelius/Dynamic-Island-For-Windows/releases/download/v0.7.2-beta.1/DynamicIslandForWindows-0.7.2-beta.1-windows-x64.exe)** · [Portable ZIP](https://github.com/kkornelius/Dynamic-Island-For-Windows/releases/download/v0.7.2-beta.1/DynamicIslandForWindows-0.7.2-beta.1-windows-x64.zip) · [Releases](https://github.com/kkornelius/Dynamic-Island-For-Windows/releases) · [Report a bug](https://github.com/kkornelius/Dynamic-Island-For-Windows/issues/new/choose)
+**[Download portable EXE](https://github.com/kkornelius/Dynamic-Island-For-Windows/releases/download/v0.7.3-beta.1/DynamicIslandForWindows-0.7.3-beta.1-windows-x64.exe)** · [Portable ZIP](https://github.com/kkornelius/Dynamic-Island-For-Windows/releases/download/v0.7.3-beta.1/DynamicIslandForWindows-0.7.3-beta.1-windows-x64.zip) · [Releases](https://github.com/kkornelius/Dynamic-Island-For-Windows/releases) · [Report a bug](https://github.com/kkornelius/Dynamic-Island-For-Windows/issues/new/choose)
 
 <img src="docs/media/overview.png" alt="Compact island and expanded player with timed lyrics" width="1040">
 
@@ -23,16 +23,18 @@ A native Windows desktop companion for music, weather, timers and quick notes.
 
 ## Features
 
+**New in v0.7.3-beta.1:** smoother spring transitions, animated floating/anchored switching, type-to-set timer values, sharper icons, browser music improvements and alerts contained in the capsule. [Full changelog](CHANGELOG.md).
+
 | Feature | Details |
 |---|---|
-| Music & lyrics | Windows media controls, artwork, system-audio visualizer and optional timed lyrics. |
+| Music & lyrics | Windows media controls, artwork, real system-audio visualizer and optional timed lyrics, including supported browser music sessions. |
 | Weather | Current conditions and hourly forecasts for a selected city, with offline cache. |
-| Timer | Countdown presets, pause/resume and an optional completion sound. |
+| Timer | Type minutes/seconds or use presets and steppers; pause/resume, reset and optional completion sound. |
 | Water reminders | Check-ins, quiet hours, snooze, daily counter and a short drinking sound. |
-| Quick notes | Local multiline notes with autosave, Unicode, clipboard, selection and undo/redo. |
-| Appearance | Floating/anchored position, color wheel, glow, opacity and clock/date options. |
+| Quick notes | Local multiline notes with autosave, Unicode, clipboard, undo/redo and Ctrl+Backspace/Delete word editing. |
+| Appearance | Animated floating/anchored switching, color wheel, glow, opacity and clock/date options. |
 | Desktop awareness | Hover to expand, click to pin, fullscreen hiding and supported browser-tab avoidance. |
-| Small interactions | Cursor-following eyes, blinking, proximity tears and Bluetooth device-type notices. |
+| Small interactions | Cursor-following eyes, blinking, proximity tears and bouncy capsule-only timer/water/Bluetooth notices. |
 
 <table>
 <tr><th>Quick notes</th><th>Weather</th></tr>
@@ -62,11 +64,16 @@ The EXE embeds its font, sound and full third-party notices. Its C runtime is li
 
 [Complete user guide](docs/USAGE.md)
 
+### Set a timer with the keyboard
+
+Open **Timer**, then click the minute or second value. Type a number and press **Enter** to save, **Tab** to switch fields or **Esc** to cancel. Seconds above 59 carry into minutes. The +/− buttons and presets remain available; pause a running timer before changing its duration.
+
 ## Engineering
 
 Rust 2024, Win32 layered window, Direct2D/DirectWrite, Windows GSMTC/SMTC media sessions, WASAPI loopback RMS history, WinRT device enumeration and worker-based HTTPS requests.
 
 - OS/network/file work uses workers and a message bus.
+- A shared high-resolution frame clock batches eyes, resize, audio and visibility animations.
 - Audio-only frames redraw the meter; other content follows its own deadlines.
 - Glow geometry/lighting weights are reused across frames and recoloring.
 - Notes use debounced, coalesced atomic writes and bounded undo history.
@@ -81,6 +88,7 @@ Development was iterative and used AI-assisted tooling. Implementation choices a
 On Windows x64, install current stable Rust/MSVC, Visual Studio C++ Build Tools and a Windows SDK:
 
 ```powershell
+python scripts/fetch-icons.py
 cargo build --release --locked
 .\target\release\dynamic-island-for-windows.exe
 ```
@@ -93,7 +101,9 @@ cargo test --locked
 python scripts/verify-portable.py target/release/dynamic-island-for-windows.exe
 ```
 
-Python is only for optional developer/release tools. [Full instructions](docs/BUILDING.md).
+Python is used for developer/release tools, including icon preparation; the running app does not need it. [Full instructions](docs/BUILDING.md).
+
+The build fetches the selected licensed Icons8 PNGs for embedding. Raw icon downloads are excluded from Git; icon provenance and hashes are documented under `assets/icons8/`.
 
 ## Privacy and beta limitations
 
@@ -101,6 +111,7 @@ Notes/preferences are local; Notes are plaintext. Audio levels are processed in 
 
 - Metadata, artwork and controls depend on Windows media-session support.
 - Lyrics availability is separate from Spotify's catalog; some tracks have no timed result.
+- YouTube music videos can have intros, edits or a different recording. Timed lyrics require a compatible result; plain-only results remain in the expanded lyrics panel. Browser player cross-checking depends on supported accessibility controls.
 - Bluetooth notices depend on drivers; battery values are not invented.
 - Timers stop when the app exits. Water check-ins do not measure intake.
 - Full screen-reader support and keyboard navigation of every control are not implemented.
@@ -112,9 +123,10 @@ Project code: [MIT](LICENSE). [Contributing](CONTRIBUTING.md) · [Security](SECU
 
 - [Inter](https://github.com/rsms/inter): The Inter Project Authors, [SIL OFL 1.1](assets/fonts/OFL.txt).
 - Water sound: [“Gulp - Hard Swallow” by magnuswaker](https://freesound.org/people/magnuswaker/sounds/531755/), CC0 1.0, adapted into three gulps. [Provenance](assets/sounds/README.md).
-- Weather: [Open-Meteo](https://open-meteo.com/), [CC BY 4.0 and sources](https://open-meteo.com/en/licence). Location data: [GeoNames](https://www.geonames.org/) via Open-Meteo. Values are rounded/formatted for display. The forecast info icon links to source credits.
+- Weather: [Open-Meteo](https://open-meteo.com/), [CC BY 4.0 and sources](https://open-meteo.com/en/licence). Location data: [GeoNames](https://www.geonames.org/) via Open-Meteo. Values are rounded/formatted for display. Source credits are available through the tray menu under About / credits.
 - Lyrics lookup: [LRCLIB](https://lrclib.net/docs). Lyrics/artwork belong to their owners; public demo text/artwork is original sample data.
 - [Embedded dependency notices](assets/licenses/NOTICES.txt), also accessible through `--licenses`.
+- App icons: [Icons8 SF Regular](https://icons8.com/icons/all--os-macos), [separate terms and build-time provenance](assets/icons8/README.md). Icons8 graphics are not MIT-licensed project code.
 
 The free Open-Meteo API is for non-commercial use and has limits. Review [its terms](https://open-meteo.com/en/terms) before commercial/higher-volume deployment. MIT does not replace third-party service/data terms.
 

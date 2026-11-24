@@ -29,10 +29,11 @@ ASSETS = {
     'assets/fonts/Inter.ttf', 'assets/fonts/OFL.txt',
     'assets/sounds/water-gulp.wav', 'assets/sounds/README.md',
     'assets/licenses/NOTICES.txt',
+    'assets/icons8/README.md', 'assets/icons8/manifest.json',
 }
 SCRIPTS = {f'scripts/{name}' for name in (
     'verify.ps1', 'package.ps1', 'measure-performance.ps1', 'generate-notices.py',
-    'render-demo.py', 'verify-portable.py', 'audit-public.py', 'build-release.ps1',
+    'render-demo.py', 'verify-portable.py', 'audit-public.py', 'build-release.ps1', 'fetch-icons.py', 'clean.ps1',
 )}
 EXACT = ROOT_FILES | DOCS | MEDIA | ASSETS | SCRIPTS
 BINARY = {'.png', '.gif', '.ttf', '.wav'}
